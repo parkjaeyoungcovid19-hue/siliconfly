@@ -1,0 +1,23 @@
+### optic=0.021:0.042 central=0.023:0.046 other=0.019:0.042 seed=0x5EED1F1F
+spontaneous 4s: pop 1.65 Hz/neuron, LC 0.0 Hz, DNa02 L/R 47.6/54.4 Hz, MDN 7.4 Hz, GF spikes: 0
+behavior 20s: walk-drive on 10%, groom-drive on 1%, DNp09 0.5-36.7 Hz, pop 1.7 Hz
+siesta 15s (scale 0.84): walk-drive on 10%
+left-eye loom: DNa L-R rate diff -2.1 -> -21.1 Hz, LC 31.1 Hz
+PASS: GF silent at rest, fires on loom; locomotor drive fluctuates; stim works; siesta alive
+### optic=0.021:0.042 central=0.023:0.046 other=0.019:0.042 seed=12345
+spontaneous 4s: pop 1.62 Hz/neuron, LC 0.0 Hz, DNa02 L/R 57.0/54.9 Hz, MDN 20.2 Hz, GF spikes: 0
+behavior 20s: walk-drive on 15%, groom-drive on 3%, DNp09 0.8-40.5 Hz, pop 1.5 Hz
+siesta 15s (scale 0.84): walk-drive on 1%
+left-eye loom: DNa L-R rate diff -5.8 -> -49.3 Hz, LC 32.2 Hz
+### optic=0.021:0.043 central=0.023:0.047 other=0.019:0.043 seed=0x5EED1F1F
+spontaneous 4s: pop 1.72 Hz/neuron, LC 0.0 Hz, DNa02 L/R 45.0/37.5 Hz, MDN 15.7 Hz, GF spikes: 0
+behavior 20s: walk-drive on 7%, groom-drive on 0%, DNp09 0.3-39.1 Hz, pop 1.7 Hz
+siesta 15s (scale 0.84): walk-drive on 13%
+left-eye loom: DNa L-R rate diff -16.1 -> -22.5 Hz, LC 31.5 Hz
+PASS: GF silent at rest, fires on loom; locomotor drive fluctuates; stim works; siesta alive
+### optic=0.021:0.043 central=0.023:0.047 other=0.019:0.043 seed=12345
+spontaneous 4s: pop 1.74 Hz/neuron, LC 0.0 Hz, DNa02 L/R 49.7/43.5 Hz, MDN 20.2 Hz, GF spikes: 0
+behavior 20s: walk-drive on 10%, groom-drive on 1%, DNp09 1.5-45.2 Hz, pop 1.7 Hz
+siesta 15s (scale 0.84): walk-drive on 4%
+left-eye loom: DNa L-R rate diff -18.2 -> -32.1 Hz, LC 33.1 Hz
+PASS: GF silent at rest, fires on loom; locomotor drive fluctuates; stim works; siesta alive

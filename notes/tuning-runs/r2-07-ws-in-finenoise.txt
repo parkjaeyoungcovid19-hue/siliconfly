@@ -1,0 +1,45 @@
+### ws=0.0010 kick=0.15 pn=0.0084
+population: 1.56 Hz/neuron | 217 spikes/step | 198 µs/step (1-step) | 70 µs/step (16-step batches)
+histogram: silent 79021 (56.7%) | <1 Hz 12187 (8.8%) | 1-5 Hz 26056 (18.7%) | 5-20 Hz 21904 (15.7%) | >20 Hz 87 (0.1%)
+  optic n= 77873    1.45 Hz  silent  52.8%
+  central n= 32381    2.84 Hz  silent  40.5%
+roles: loom 0.0 | gf 0.0 | dnaL 6.5 | dnaR 7.8 | mdn 0.6 | fwd 1.8 | groom 0.5 | escw 0.5 | ascend 0.7 | sens 0.0
+  population intrinsic    1.56 Hz -> tuned    1.56 Hz  (1.00x)
+  dnaL intrinsic    0.50 Hz -> tuned    6.50 Hz  (13.00x)
+  dnaR intrinsic    0.25 Hz -> tuned    7.75 Hz  (31.00x)
+  mdn intrinsic    0.75 Hz -> tuned    0.62 Hz  (0.83x)
+  fwd intrinsic    1.00 Hz -> tuned    1.75 Hz  (1.75x)
+  groom intrinsic    0.42 Hz -> tuned    0.50 Hz  (1.20x)
+  escw intrinsic    0.83 Hz -> tuned    0.50 Hz  (0.60x)
+  optic intrinsic    1.49 Hz -> tuned    1.45 Hz
+  central intrinsic    2.75 Hz -> tuned    2.84 Hz
+### ws=0.0014 kick=0.15 pn=0.0084
+population: 1.56 Hz/neuron | 217 spikes/step | 167 µs/step (1-step) | 69 µs/step (16-step batches)
+histogram: silent 79610 (57.2%) | <1 Hz 12223 (8.8%) | 1-5 Hz 26219 (18.8%) | 5-20 Hz 21037 (15.1%) | >20 Hz 166 (0.1%)
+  optic n= 77873    1.42 Hz  silent  53.4%
+  central n= 32381    2.92 Hz  silent  40.7%
+roles: loom 0.0 | gf 0.0 | dnaL 14.2 | dnaR 12.8 | mdn 0.6 | fwd 4.5 | groom 0.6 | escw 0.4 | ascend 0.7 | sens 0.0
+  population intrinsic    1.56 Hz -> tuned    1.56 Hz  (1.00x)
+  dnaL intrinsic    0.50 Hz -> tuned   14.25 Hz  (28.50x)
+  dnaR intrinsic    0.25 Hz -> tuned   12.75 Hz  (51.00x)
+  mdn intrinsic    0.75 Hz -> tuned    0.62 Hz  (0.83x)
+  fwd intrinsic    1.00 Hz -> tuned    4.50 Hz  (4.50x)
+  groom intrinsic    0.42 Hz -> tuned    0.58 Hz  (1.40x)
+  escw intrinsic    0.83 Hz -> tuned    0.42 Hz  (0.50x)
+  optic intrinsic    1.49 Hz -> tuned    1.42 Hz
+  central intrinsic    2.75 Hz -> tuned    2.92 Hz
+### ws=0.0020 kick=0.15 pn=0.0084
+population: 1.62 Hz/neuron | 225 spikes/step | 172 µs/step (1-step) | 73 µs/step (16-step batches)
+histogram: silent 80055 (57.5%) | <1 Hz 12081 (8.7%) | 1-5 Hz 26518 (19.0%) | 5-20 Hz 20224 (14.5%) | >20 Hz 377 (0.3%)
+  optic n= 77873    1.38 Hz  silent  54.2%
+  central n= 32381    3.25 Hz  silent  40.0%
+roles: loom 0.0 | gf 3.5 | dnaL 26.0 | dnaR 23.5 | mdn 5.8 | fwd 8.5 | groom 0.4 | escw 0.1 | ascend 0.6 | sens 0.0
+  population intrinsic    1.56 Hz -> tuned    1.62 Hz  (1.03x)
+  dnaL intrinsic    0.50 Hz -> tuned   26.00 Hz  (52.00x)
+  dnaR intrinsic    0.25 Hz -> tuned   23.50 Hz  (94.00x)
+  mdn intrinsic    0.75 Hz -> tuned    5.75 Hz  (7.67x)
+  fwd intrinsic    1.00 Hz -> tuned    8.50 Hz  (8.50x)
+  groom intrinsic    0.42 Hz -> tuned    0.42 Hz  (1.00x)
+  escw intrinsic    0.83 Hz -> tuned    0.08 Hz  (0.10x)
+  optic intrinsic    1.49 Hz -> tuned    1.38 Hz
+  central intrinsic    2.75 Hz -> tuned    3.25 Hz

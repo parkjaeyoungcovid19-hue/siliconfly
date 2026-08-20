@@ -1,0 +1,16 @@
+=== seed 0x5EED1F1F ===
+spontaneous 4s: pop 2.07 Hz/neuron, LC 0.0 Hz, DNa02 L/R 44.6/40.8 Hz, MDN 22.1 Hz, GF spikes: 0
+abrupt loom 0.4s: LC rate 172.1 Hz, GF spikes 139, first at 3 ms
+behavior 20s: walk-drive on 6%, groom-drive on 1%, DNp09 0.9-33.5 Hz, pop 2.1 Hz
+siesta 15s (scale 0.84): walk-drive on 26%
+air puff 1s: GF spikes 1
+left-eye loom: DNa L-R rate diff -6.4 -> -30.2 Hz, LC 31.4 Hz
+PASS: GF silent at rest, fires on loom; locomotor drive fluctuates; stim works; siesta alive
+=== seed 12345 ===
+spontaneous 4s: pop 2.03 Hz/neuron, LC 0.0 Hz, DNa02 L/R 42.9/46.3 Hz, MDN 13.2 Hz, GF spikes: 0
+abrupt loom 0.4s: LC rate 172.8 Hz, GF spikes 145, first at 3 ms
+behavior 20s: walk-drive on 7%, groom-drive on 3%, DNp09 0.8-36.5 Hz, pop 1.9 Hz
+siesta 15s (scale 0.84): walk-drive on 32%
+air puff 1s: GF spikes 1
+left-eye loom: DNa L-R rate diff -24.6 -> -21.1 Hz, LC 32.2 Hz
+PASS: GF silent at rest, fires on loom; locomotor drive fluctuates; stim works; siesta alive

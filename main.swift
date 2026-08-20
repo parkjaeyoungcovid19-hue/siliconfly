@@ -1,16 +1,39 @@
-// DesktopFly — a 3D fruit fly that walks across your macOS desktop, driven by
-// REAL FlyWire v783 connectome data: a live LIF simulation of the escape
-// circuit (LC4/LPLC2 looming detectors -> DNp01 giant fiber), DNa02 steering
-// and MDN backward-walking neurons, with real signed synapse weights.
+// SiliconFly — a 3D fruit fly that walks across your macOS desktop, driven by
+// REAL FlyWire v783 connectome data: a live GPU (Metal) LIF simulation of the
+// WHOLE brain — 139,255 neurons, 15,091,983 signed edges — with the escape
+// circuit (LC4/LPLC2 -> DNp01 giant fiber), DNa01/02 steering, DNp09 walking
+// and MDN backward-walking neurons read out as behavior.
+//
+// Files:  Sim.swift (connectome loader + shared types), MetalSim.swift + LIF.metal
+//         (the GPU simulation), FlyModel.swift (body), BrainView.swift (brain
+//         window), Environment.swift (permission-free senses).
 //
 // Build:  ./build.sh
-// Run:    ./DesktopFly                     (menu-bar 🪰; brain window shows live spikes)
-//         ./DesktopFly --snapshot out.png  (offscreen fly model render)
-//         ./DesktopFly --brainshot out.png (offscreen brain window render)
-//         ./DesktopFly --simtest           (headless circuit test: spontaneous + loom)
+// Run:    ./SiliconFly                     (menu-bar 🪰; brain window shows live spikes)
+//         ./SiliconFly --snapshot out.png  (offscreen fly model render)
+//         ./SiliconFly --brainshot out.png (offscreen brain window render)
+//         ./SiliconFly --simtest           (headless circuit test + GPU benchmark)
+//         ./SiliconFly --behaviortest      (end-to-end sim -> body checks)
+//         ./SiliconFly --gpucheck          (GPU sim vs an independent CPU reference)
+//         ./SiliconFly --brainstats [s]    (resting-regime diagnostics: rates by class/role)
+//         --seed N                          (pin the sim seed; N decimal or 0x hex)
 
 import Cocoa
 import SceneKit
+
+// Sim seed. `--seed N` pins every sim in this process. Without it the CLI
+// diagnostic modes use the shipped default, so --simtest/--behaviortest/
+// --gpucheck/--brainstats/--brainshot stay reproducible, and the live app draws
+// a fresh seed per launch (two launches are not the same fly).
+let seedOverride: UInt32? = {
+    let a = CommandLine.arguments
+    guard let i = a.firstIndex(of: "--seed"), i + 1 < a.count else { return nil }
+    let t = a[i + 1]
+    let hex = t.hasPrefix("0x") || t.hasPrefix("0X")
+    return UInt32(hex ? String(t.dropFirst(2)) : t, radix: hex ? 16 : 10)
+}()
+let SIM_SEED: UInt32 = seedOverride ?? 0x5EED_1F1F
+func launchSeed() -> UInt32 { seedOverride ?? .random(in: 1...UInt32.max) }
 
 // MARK: - Desktop overlay scene
 
@@ -109,9 +132,11 @@ func runSnapshot(path: String) {
 }
 
 func runBrainshot(path: String) {
-    guard let data = loadBrainData() else { fputs("no data/ — run etl.py first\n", stderr); exit(1) }
-    let sim = LIFSim(circuit: data.circuit, spikeBus: nil)
-    let bs = buildBrainScene(points: data.points, sim: sim)
+    guard let c = loadConnectome(),
+          let sim = MetalSim(connectome: c, spikeBus: nil, seed: SIM_SEED) else {
+        fputs("no data/ — run etl.py first\n", stderr); exit(1)
+    }
+    let bs = buildBrainScene(connectome: c, sim: sim)
     bs.brainGroup.removeAllActions()
     bs.brainGroup.eulerAngles = SCNVector3(-0.15, 0.5, 0)
     // decorate with a burst of fake spikes so the preview shows the live look
@@ -123,9 +148,16 @@ func runBrainshot(path: String) {
 }
 
 func runSimtest() {
-    guard let data = loadBrainData() else { fputs("no data/ — run etl.py first\n", stderr); exit(1) }
-    let sim = LIFSim(circuit: data.circuit, spikeBus: nil)
-    print("circuit: \(sim.n) neurons | loom L/R: \(sim.loomLeft.count)/\(sim.loomRight.count)"
+    guard let c = loadConnectome(),
+          let sim = MetalSim(connectome: c, spikeBus: nil, seed: SIM_SEED) else {
+        fputs("no data/ — run etl.py first\n", stderr); exit(1)
+    }
+    // the 30 s throughput line stays on here: one long run, and it is the same
+    // production log path the app uses (--behaviortest makes many short sims,
+    // so it stays quiet there)
+    print("connectome: \(sim.n) neurons | \(c.e) edges | \(sim.deviceName)"
+          + " | fixed point Q\(Int(log2(Double(sim.fixedPointScale))))")
+    print("groups: loom L/R \(sim.loomLeft.count)/\(sim.loomRight.count)"
           + " | GF: \(sim.gf.count) | DNa L/R: \(sim.dnaL.count)/\(sim.dnaR.count) | MDN: \(sim.mdn.count)"
           + " | DNp09: \(sim.fwd.count) | DNg11: \(sim.groom.count) | escW: \(sim.escw.count)"
           + " | ascend: \(sim.ascend.count) | sens: \(sim.sens.count)")
@@ -163,8 +195,8 @@ func runSimtest() {
         sim.step(1)
         if ms % 10 == 0 {
             samples += 1
-            if sim.rateFwd / 10 > 0.22 { walkOn += 1 }
-            if sim.rateGroom / 8 > 0.5 { groomOn += 1 }
+            if SignalBuilder.walkDrive(sim.rateFwd) > 0.22 { walkOn += 1 }
+            if SignalBuilder.groomDrive(sim.rateGroom) > 0.5 { groomOn += 1 }
             fwdMin = min(fwdMin, sim.rateFwd); fwdMax = max(fwdMax, sim.rateFwd)
         }
     }
@@ -179,7 +211,7 @@ func runSimtest() {
         sim.step(1)
         if ms % 10 == 0 {
             siestaSamples += 1
-            if sim.rateFwd / 10 > 0.22 { siestaWalkOn += 1 }
+            if SignalBuilder.walkDrive(sim.rateFwd) > 0.22 { siestaWalkOn += 1 }
         }
     }
     sim.activityScale = 1
@@ -220,7 +252,64 @@ func runSimtest() {
     print(String(format: "click probes: GF cluster -> spike %@, DNg11 cluster -> groom rate %.0f Hz",
                  gfStim ? "yes" : "NO", groomStim))
 
+    // Phase 7: GPU state consistency. Right after a step, every neuron in the
+    // spike list must sit at v = 0 with a full refractory period, the list must
+    // hold no duplicates, and the group histogram must agree with it.
+    var consistent = true
+    var checkedSteps = 0, checkedSpikes = 0, checkedGrouped = 0
+    for _ in 0..<200 {
+        sim.step(1)
+        let spikes = sim.lastStepSpikes()
+        let v = sim.membrane()
+        let refr = sim.debugRefr()
+        let hist = sim.lastStepGroupCounts()
+        guard v.count == sim.n, refr.count == sim.n else { consistent = false; break }
+        var seen = Set<Int32>()
+        var grouped = 0
+        for s in spikes {
+            let i = Int(s)
+            if i < 0 || i >= sim.n || !seen.insert(s).inserted { consistent = false; break }
+            if v[i] != 0 || refr[i] != 2 { consistent = false; break }
+            if sim.roles[i] != "other" && sim.roles[i] != "ascend" && sim.roles[i] != "sens" {
+                grouped += 1
+            }
+        }
+        if Int(hist[1...8].reduce(0, +)) != grouped { consistent = false }
+        if !consistent { break }
+        checkedSteps += 1; checkedSpikes += spikes.count; checkedGrouped += grouped
+    }
+    print("state check: \(checkedSteps) steps, \(checkedSpikes) spikers"
+          + " (\(checkedGrouped) role-tagged) match membrane/refractory/histogram"
+          + " -> \(consistent ? "consistent" : "INCONSISTENT")")
+
+    // Phase 8: throughput. The render loop steps in batches of 8-50 ms, so the
+    // 16-step number is the one that has to clear real time.
+    func bench(_ batch: Int, steps: Int) -> (us: Double, spikes: Double) {
+        sim.step(50)                       // warm up / flush
+        let s0 = sim.totalSpikes
+        let t0 = DispatchTime.now()
+        var done = 0
+        while done < steps { sim.step(batch); done += batch }
+        let us = Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1000
+        return (us / Double(done), Double(sim.totalSpikes - s0) / Double(done))
+    }
+    let b16 = bench(16, steps: 2000)
+    let b1 = bench(1, steps: 2000)
+    let realtime = b16.us < 1000
+    print(String(format: "bench 16-step batches: %.0f µs/step, %.0f spikes/step", b16.us, b16.spikes))
+    print(String(format: "bench  1-step batches: %.0f µs/step, %.0f spikes/step", b1.us, b1.spikes))
+    print("\(realtime ? "PASS" : "FAIL") realtime: 16-step batches "
+          + String(format: "%.0f µs/step (budget 1000)", b16.us))
+    if b16.spikes > 0.2 * Double(sim.n) {
+        sim.activityScale = 0.3
+        let b16q = bench(16, steps: 2000)
+        sim.activityScale = 1
+        print(String(format: "bench 16-step @ activityScale 0.3: %.0f µs/step, %.0f spikes/step",
+                     b16q.us, b16q.spikes))
+    }
+
     let pass = gfSpont == 0 && gfLoom > 0 && walkOn > 0 && gfStim && siestaPct > 3
+        && consistent && realtime
     print(pass ? "PASS: GF silent at rest, fires on loom; locomotor drive fluctuates; stim works; siesta alive"
                : "FAIL: tune weights/noise")
     exit(pass ? 0 : 1)
@@ -229,15 +318,22 @@ func runSimtest() {
 // MARK: - Behavior test (headless sim -> 3D body end-to-end)
 
 func runBehaviorTest() {
-    guard let data = loadBrainData() else { fputs("no data/ — run etl.py first\n", stderr); exit(1) }
+    guard let connectome = loadConnectome() else {
+        fputs("no data/ — run etl.py first\n", stderr); exit(1)
+    }
     let bounds = CGSize(width: 1512, height: 982)
     let dt: CGFloat = 1.0 / 60.0
     var failures = 0
 
-    func scenario(_ name: String, stim: (LIFSim) -> Void, hold: CGFloat,
+    func scenario(_ name: String, stim: (MetalSim) -> Void, hold: CGFloat,
                   setup: ((Fly) -> Void)? = nil,
                   check: (Fly) -> Bool, describe: (Fly) -> String) {
-        let sim = LIFSim(circuit: data.circuit, spikeBus: nil)
+        // the connectome's CSR buffers and compiled kernels are shared, so a
+        // fresh per-scenario sim only reallocates its own ~7 MB of state
+        guard let sim = MetalSim(connectome: connectome, spikeBus: nil, seed: SIM_SEED) else {
+            failures += 1; print("FAIL  \(name): no Metal sim"); return
+        }
+        sim.perfLogIntervalMs = 0
         let builder = SignalBuilder()
         let fly = Fly(at: .zero)
         fly.state = .idle
@@ -463,7 +559,12 @@ func runBehaviorTest() {
 final class SignalBuilder {
     private var dnaBaseline: Float = 0
 
-    func make(_ sim: LIFSim, dt: CGFloat) -> BrainSignals {
+    /// DNp09 rate -> walk drive and DNg11 rate -> groom drive, static so --simtest's
+    /// duty-cycle probes measure the identical mapping the body is driven by.
+    static func walkDrive(_ rateFwd: Float) -> CGFloat { clampf((CGFloat(rateFwd) - 10) / 33, 0, 1.3) }
+    static func groomDrive(_ rateGroom: Float) -> CGFloat { clampf(CGFloat(rateGroom) / 5, 0, 1.5) }
+
+    func make(_ sim: MetalSim, dt: CGFloat) -> BrainSignals {
         let diff = sim.rateDNaL - sim.rateDNaR
         // Slow adaptation (tau ~8 s): the connectome's persistent left/right
         // wiring asymmetry is adapted out, so steady-state walking is straight
@@ -471,13 +572,24 @@ final class SignalBuilder {
         dnaBaseline += (diff - dnaBaseline) * Float(min(1, dt / 8))
         var s = BrainSignals()
         s.escape = sim.consumeGF()
-        s.nervous = clampf(CGFloat(sim.rateLoom) / 80, 0, 1)
+        s.nervous = clampf(CGFloat(sim.rateLoom) / 115, 0, 1)
         s.turnBias = clampf(CGFloat(diff - dnaBaseline) * 0.04, -1.0, 1.0)
-        s.backward = sim.rateMDN > 8
-        s.walkDrive = clampf(CGFloat(sim.rateFwd) / 10, 0, 1.3)
-        s.groomDrive = CGFloat(sim.rateGroom) / 8
+        // MDN rests at ~28 Hz network-driven (p95 40 Hz): 60 Hz is above that resting
+        // tail and far below the ~200 Hz an MDN stimulation reaches.
+        s.backward = sim.rateMDN > 60
+        // DNp09 rests at ~22 Hz network-driven (p05 6, p50 14, p95 25), so walkDrive
+        // is rectified-linear: 10/33 straddles the resting swing with FlyModel's
+        // hysteresis band (0.22 entry = 17.3 Hz, 0.08 exit = 12.6 Hz).
+        s.walkDrive = SignalBuilder.walkDrive(sim.rateFwd)
+        // DNg11 is weakly wired and rests near the floor (p50 0.5-2.1 Hz, p95 2.9-5.4)
+        // while a click stim reaches ~200 Hz: /5 puts rest under FlyModel's 0.3
+        // groom-exit and any real stim at the 1.5 clamp.
+        s.groomDrive = SignalBuilder.groomDrive(sim.rateGroom)
         s.wingDrive = clampf(CGFloat(sim.rateEscW) / 10, 0, 1.3)
-        s.arousal = clampf(CGFloat(sim.ratePop) / 20, 0, 1)
+        // whole-brain rate rests at ~1.9 Hz/neuron and multiplies inside an arousal
+        // burst; /10 keeps rest at ~0.19, so only a burst crosses FlyModel's 0.5
+        // spontaneous-takeoff gate.
+        s.arousal = clampf(CGFloat(sim.ratePop) / 10, 0, 1)
         return s
     }
 }
@@ -493,7 +605,7 @@ final class Coordinator: NSObject, SCNSceneRendererDelegate {
     private let lock = NSLock()
     private var pending: [(Coordinator) -> Void] = []
 
-    let sim: LIFSim?
+    let sim: MetalSim?
     private let fpsLog = ProcessInfo.processInfo.environment["DESKTOPFLY_FPS"] != nil
     private var fpsFrames = 0
     private var fpsWindowStart: TimeInterval = 0
@@ -513,7 +625,7 @@ final class Coordinator: NSObject, SCNSceneRendererDelegate {
     private var windowLoomR: Float = 0
     private(set) var lastFlyPos = CGPoint.zero
 
-    init(bounds: CGSize, sim: LIFSim?) {
+    init(bounds: CGSize, sim: MetalSim?) {
         self.bounds = bounds
         self.sim = sim
         self.scene = buildScene(bounds: bounds)
@@ -716,13 +828,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let frame = screen.frame
         screenFrame = frame
 
-        var sim: LIFSim? = nil
+        var sim: MetalSim? = nil
         let spikeBus = SpikeBus()
-        var brainPoints: BrainPointsFile? = nil
-        if let data = loadBrainData() {
-            sim = LIFSim(circuit: data.circuit, spikeBus: spikeBus)
-            brainPoints = data.points
-            dataInfo = "FlyWire v783 · \(data.points.points.count) somas · circuit \(data.circuit.neurons.count)n/\(data.circuit.edges.count)e"
+        var connectome: Connectome? = nil
+        if let c = loadConnectome(),
+           let s = MetalSim(connectome: c, spikeBus: spikeBus, seed: launchSeed()) {
+            sim = s
+            connectome = c
+            dataInfo = "\(c.summary) · \(s.deviceName)"
         }
 
         coordinator = Coordinator(bounds: frame.size, sim: sim)
@@ -750,8 +863,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         window.contentView = scnView
         window.orderFrontRegardless()
 
-        if let sim = sim, let pts = brainPoints {
-            let wc = BrainWindowController(points: pts, sim: sim, screen: screen)
+        if let sim = sim, let c = connectome {
+            let wc = BrainWindowController(connectome: c, sim: sim, screen: screen)
             wc.show()
             brainWC = wc
         }
@@ -880,11 +993,17 @@ if let i = args.firstIndex(of: "--brainshot") {
     runBrainshot(path: args.count > i + 1 ? args[i + 1] : "brain.png")
     exit(0)
 }
+if args.contains("--gpucheck") {
+    runGPUCheck()
+}
 if args.contains("--simtest") {
     runSimtest()
 }
 if args.contains("--behaviortest") {
     runBehaviorTest()
+}
+if let i = args.firstIndex(of: "--brainstats") {
+    runBrainStats(seconds: args.count > i + 1 ? Int(args[i + 1]) ?? 5 : 5)
 }
 
 let app = NSApplication.shared

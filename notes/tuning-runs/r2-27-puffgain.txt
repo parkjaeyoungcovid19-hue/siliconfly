@@ -1,0 +1,14 @@
+### airPuffGain=0.050
+spontaneous 4s: pop 2.18 Hz/neuron, LC 0.0 Hz, DNa02 L/R 68.6/66.1 Hz, MDN 38.6 Hz, GF spikes: 0
+abrupt loom 0.4s: LC rate 114.6 Hz, GF spikes 95, first at 5 ms
+behavior 20s: walk-drive on 38%, groom-drive on 10%, DNp09 1.6-48.5 Hz, pop 2.2 Hz
+siesta 15s (scale 0.84): walk-drive on 7%
+air puff 1s: GF spikes 0
+PASS: GF silent at rest, fires on loom; locomotor drive fluctuates; stim works; siesta alive
+### airPuffGain=0.045
+spontaneous 4s: pop 2.18 Hz/neuron, LC 0.0 Hz, DNa02 L/R 68.6/66.1 Hz, MDN 38.6 Hz, GF spikes: 0
+abrupt loom 0.4s: LC rate 114.6 Hz, GF spikes 95, first at 5 ms
+behavior 20s: walk-drive on 38%, groom-drive on 10%, DNp09 1.6-48.5 Hz, pop 2.2 Hz
+siesta 15s (scale 0.84): walk-drive on 7%
+air puff 1s: GF spikes 0
+PASS: GF silent at rest, fires on loom; locomotor drive fluctuates; stim works; siesta alive

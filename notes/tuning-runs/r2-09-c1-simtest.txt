@@ -1,0 +1,16 @@
+metal-sim: Apple M4 Pro N=139255 E=15091983 load 36 ms compile 1 ms
+metal-sim: 30000 steps in 7305 ms (243 µs/step, 246 spikes/step avg)
+connectome: 139255 neurons | 15091983 edges | Apple M4 Pro | fixed point Q16
+groups: loom L/R 162/152 | GF: 2 | DNa L/R: 2/2 | MDN: 4 | DNp09: 2 | DNg11: 6 | escW: 6 | ascend: 24 | sens: 16
+spontaneous 4s: pop 1.91 Hz/neuron, LC 0.0 Hz, DNa02 L/R 69.5/54.7 Hz, MDN 27.7 Hz, GF spikes: 40
+abrupt loom 0.4s: LC rate 113.3 Hz, GF spikes 86, first at 7 ms
+behavior 20s: walk-drive on 100%, groom-drive on 34%, DNp09 1.5-44.1 Hz, pop 2.2 Hz
+siesta 15s (scale 0.84): walk-drive on 82%
+air puff 1s: GF spikes 52
+left-eye loom: DNa L-R rate diff -4.8 -> -17.2 Hz, LC 20.1 Hz
+click probes: GF cluster -> spike yes, DNg11 cluster -> groom rate 197 Hz
+state check: 200 steps, 60978 spikers (110 role-tagged) match membrane/refractory/histogram -> consistent
+bench 16-step batches: 71 µs/step, 262 spikes/step
+bench  1-step batches: 190 µs/step, 264 spikes/step
+PASS realtime: 16-step batches 71 µs/step (budget 1000)
+FAIL: tune weights/noise

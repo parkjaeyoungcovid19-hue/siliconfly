@@ -1,8 +1,22 @@
 # Data license
 
-`brain_points.json` and `circuit.json` are derived from the publicly released
-FlyWire connectome data products (FAFB v783), downloaded from
-[FlyWire Codex](https://codex.flywire.ai) and processed by `../etl.py`.
+`connectome.json`, `neurons.bin`, `synapses.bin` (and the legacy
+`brain_points.json` / `circuit.json`) are derived from the publicly released
+FlyWire connectome data products (FAFB v783) and processed by `../etl.py`.
+
+Sources:
+
+- **Neuron annotations, coordinates, cell types and neurotransmitters** —
+  `classification.csv.gz`, `coordinates.csv.gz`,
+  `consolidated_cell_types.csv.gz`, `neurons.csv.gz`, downloaded from
+  [FlyWire Codex](https://codex.flywire.ai)
+  (`https://storage.googleapis.com/flywire-data/codex/data/fafb/783`).
+- **Connectivity** — `2025_Connectivity_783.parquet` from
+  [eonsystemspbc/fly-brain](https://github.com/eonsystemspbc/fly-brain), an
+  aggregation of FlyWire's `proofread_connections_783` release
+  ([Zenodo 10676866](https://doi.org/10.5281/zenodo.10676866)) into
+  15,091,983 (pre, post) synapse-count pairs with no threshold. It carries
+  the same FlyWire CC BY-NC 4.0 terms as the Codex dumps.
 
 FlyWire data is licensed under
 [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/)

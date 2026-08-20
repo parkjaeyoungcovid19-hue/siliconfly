@@ -1,0 +1,30 @@
+### seed 0x11111111
+spontaneous 4s: pop 2.54 Hz/neuron, LC 0.2 Hz, DNa02 L/R 8.5/10.4 Hz, MDN 0.4 Hz, GF spikes: 0
+abrupt loom 0.4s: LC rate 127.4 Hz, GF spikes 88, first at 9 ms
+behavior 20s: walk-drive on 32%, groom-drive on 8%, DNp09 0.0-11.3 Hz, pop 2.6 Hz
+siesta 15s (scale 0.84): walk-drive on 26%
+air puff 1s: GF spikes 0
+left-eye loom: DNa L-R rate diff -0.0 -> -15.6 Hz, LC 23.8 Hz
+click probes: GF cluster -> spike yes, DNg11 cluster -> groom rate 203 Hz
+PASS realtime: 16-step batches 68 µs/step (budget 1000)
+PASS: GF silent at rest, fires on loom; locomotor drive fluctuates; stim works; siesta alive
+### seed 12345
+spontaneous 4s: pop 2.52 Hz/neuron, LC 0.2 Hz, DNa02 L/R 14.1/5.0 Hz, MDN 0.0 Hz, GF spikes: 0
+abrupt loom 0.4s: LC rate 128.3 Hz, GF spikes 87, first at 4 ms
+behavior 20s: walk-drive on 27%, groom-drive on 10%, DNp09 0.0-10.2 Hz, pop 2.5 Hz
+siesta 15s (scale 0.84): walk-drive on 15%
+air puff 1s: GF spikes 0
+left-eye loom: DNa L-R rate diff +8.8 -> -14.9 Hz, LC 24.0 Hz
+click probes: GF cluster -> spike yes, DNg11 cluster -> groom rate 200 Hz
+PASS realtime: 16-step batches 69 µs/step (budget 1000)
+PASS: GF silent at rest, fires on loom; locomotor drive fluctuates; stim works; siesta alive
+### seed 0xA5A5A5A5
+spontaneous 4s: pop 2.54 Hz/neuron, LC 0.1 Hz, DNa02 L/R 20.9/5.1 Hz, MDN 1.1 Hz, GF spikes: 0
+abrupt loom 0.4s: LC rate 128.2 Hz, GF spikes 91, first at 6 ms
+behavior 20s: walk-drive on 22%, groom-drive on 5%, DNp09 0.0-8.5 Hz, pop 2.6 Hz
+siesta 15s (scale 0.84): walk-drive on 18%
+air puff 1s: GF spikes 0
+left-eye loom: DNa L-R rate diff +17.2 -> +3.7 Hz, LC 23.6 Hz
+click probes: GF cluster -> spike yes, DNg11 cluster -> groom rate 203 Hz
+PASS realtime: 16-step batches 70 µs/step (budget 1000)
+PASS: GF silent at rest, fires on loom; locomotor drive fluctuates; stim works; siesta alive

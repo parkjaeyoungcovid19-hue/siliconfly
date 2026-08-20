@@ -1,0 +1,30 @@
+=== seed 0x5EED1F1F ===
+behavior 20s: walk-drive on 7%, groom-drive on 0%, DNp09 0.3-39.1 Hz, pop 1.7 Hz
+  TEMP fwd p05   5.64 p25  10.45 p50  14.10 p62  15.86 p75  18.13 p95  25.31 max  38.41
+  TEMP groom p05   0.00 p25   0.08 p50   0.47 p62   0.78 p75   1.21 p95   2.88 max   5.50
+  TEMP mdn p05   7.24 p25  14.08 p50  18.91 p62  21.09 p75  23.82 p95  31.24 max  42.48
+  TEMP escw p05   0.00 p25   0.00 p50   0.00 p62   0.02 p75   0.12 p95   1.50 max 203.74
+  TEMP siestaFwd p50  15.33 p75  20.47 p90  25.24 p97  29.94 max  37.76
+siesta 15s (scale 0.84): walk-drive on 13%
+air puff 1s: GF spikes 1
+left-eye loom: DNa L-R rate diff -16.1 -> -22.5 Hz, LC 31.5 Hz
+=== seed 12345 ===
+behavior 20s: walk-drive on 10%, groom-drive on 1%, DNp09 1.5-45.2 Hz, pop 1.7 Hz
+  TEMP fwd p05   7.26 p25  12.31 p50  15.87 p62  17.50 p75  19.60 p95  26.53 max  42.97
+  TEMP groom p05   0.08 p25   0.45 p50   1.11 p62   1.49 p75   2.05 p95   3.81 max   8.31
+  TEMP mdn p05   5.93 p25  11.32 p50  15.76 p62  18.08 p75  21.03 p95  29.27 max  42.62
+  TEMP escw p05   0.00 p25   0.00 p50   0.04 p62   0.14 p75   0.39 p95   1.78 max 203.41
+  TEMP siestaFwd p50   9.23 p75  14.81 p90  19.96 p97  24.59 max  31.30
+siesta 15s (scale 0.84): walk-drive on 4%
+air puff 1s: GF spikes 0
+left-eye loom: DNa L-R rate diff -18.2 -> -32.1 Hz, LC 33.1 Hz
+=== seed 0xA5A5A5A5 ===
+behavior 20s: walk-drive on 6%, groom-drive on 7%, DNp09 1.0-38.3 Hz, pop 1.8 Hz
+  TEMP fwd p05   5.23 p25  10.01 p50  13.65 p62  15.53 p75  18.07 p95  24.51 max  35.23
+  TEMP groom p05   0.53 p25   1.31 p50   2.14 p62   2.65 p75   3.35 p95   5.37 max   7.61
+  TEMP mdn p05   8.12 p25  14.60 p50  18.96 p62  21.06 p75  23.72 p95  30.64 max  38.41
+  TEMP escw p05   0.00 p25   0.00 p50   0.02 p62   0.08 p75   0.33 p95   1.61 max 204.19
+  TEMP siestaFwd p50  15.70 p75  21.21 p90  26.36 p97  31.03 max  39.88
+siesta 15s (scale 0.84): walk-drive on 15%
+air puff 1s: GF spikes 0
+left-eye loom: DNa L-R rate diff +13.7 -> -20.2 Hz, LC 31.3 Hz

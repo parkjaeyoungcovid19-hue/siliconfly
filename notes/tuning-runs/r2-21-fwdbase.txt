@@ -1,0 +1,12 @@
+### baselineFwd=0.038 (optic 0.026:0.044, central 0.028:0.050)
+spontaneous 4s: pop 2.18 Hz/neuron, LC 0.0 Hz, DNa02 L/R 68.6/66.1 Hz, MDN 38.6 Hz, GF spikes: 0
+behavior 20s: walk-drive on 31%, groom-drive on 10%, DNp09 1.6-48.5 Hz, pop 2.2 Hz
+  TEMP fwd p05    9.80  p25   16.43  p50   21.50  p75   26.65  p95   34.40  mean   21.73
+siesta 15s (scale 0.84): walk-drive on 5%
+PASS: GF silent at rest, fires on loom; locomotor drive fluctuates; stim works; siesta alive
+### baselineFwd=0.044 (optic 0.026:0.044, central 0.028:0.050)
+spontaneous 4s: pop 2.14 Hz/neuron, LC 0.0 Hz, DNa02 L/R 53.7/54.6 Hz, MDN 29.8 Hz, GF spikes: 0
+behavior 20s: walk-drive on 38%, groom-drive on 10%, DNp09 0.8-46.3 Hz, pop 2.3 Hz
+  TEMP fwd p05   10.44  p25   17.47  p50   22.76  p75   28.00  p95   35.87  mean   22.80
+siesta 15s (scale 0.84): walk-drive on 4%
+PASS: GF silent at rest, fires on loom; locomotor drive fluctuates; stim works; siesta alive

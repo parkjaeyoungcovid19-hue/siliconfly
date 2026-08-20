@@ -1,0 +1,48 @@
+### kick=0.25 pNoise=0.005 optic=0.012:0.042 central=0.016:0.048 vp=0.012:0.042 (ws 0.0032)
+population: 1.30 Hz/neuron | 181 spikes/step | 194 µs/step (1-step) | 72 µs/step (16-step batches)
+histogram: silent 87931 (63.1%) | <1 Hz 13312 (9.6%) | 1-5 Hz 27654 (19.9%) | 5-20 Hz 9497 (6.8%) | >20 Hz 861 (0.6%)
+  optic n= 77873    0.81 Hz  silent  63.5%
+  central n= 32381    3.11 Hz  silent  42.1%
+roles: loom 0.0 | gf 22.0 | dnaL 48.2 | dnaR 50.5 | mdn 23.0 | fwd 19.0 | groom 6.2 | escw 2.4 | ascend 1.0 | sens 0.0
+  population intrinsic    0.94 Hz -> tuned    1.30 Hz  (1.39x)
+  dnaL intrinsic    0.75 Hz -> tuned   48.25 Hz  (64.33x)
+  dnaR intrinsic    1.00 Hz -> tuned   50.50 Hz  (50.50x)
+  mdn intrinsic    1.12 Hz -> tuned   23.00 Hz  (20.44x)
+  fwd intrinsic    3.75 Hz -> tuned   19.00 Hz  (5.07x)
+  groom intrinsic    0.83 Hz -> tuned    6.17 Hz  (7.40x)
+  escw intrinsic    1.42 Hz -> tuned    2.42 Hz  (1.71x)
+  optic intrinsic    0.87 Hz -> tuned    0.81 Hz
+  central intrinsic    1.64 Hz -> tuned    3.11 Hz
+  visual_projection intrinsic    0.83 Hz -> tuned    0.70 Hz
+### kick=0.15 pNoise=0.0084 optic=0.024:0.046 central=0.026:0.050 vp=0.024:0.046 (ws 0.0032)
+population: 2.19 Hz/neuron | 305 spikes/step | 174 µs/step (1-step) | 78 µs/step (16-step batches)
+histogram: silent 79139 (56.8%) | <1 Hz 11377 (8.2%) | 1-5 Hz 25986 (18.7%) | 5-20 Hz 20786 (14.9%) | >20 Hz 1967 (1.4%)
+  optic n= 77873    1.43 Hz  silent  55.2%
+  central n= 32381    5.26 Hz  silent  35.1%
+roles: loom 0.0 | gf 23.8 | dnaL 62.0 | dnaR 60.5 | mdn 31.2 | fwd 21.8 | groom 7.6 | escw 3.5 | ascend 1.2 | sens 0.0
+  population intrinsic    1.56 Hz -> tuned    2.19 Hz  (1.40x)
+  dnaL intrinsic    0.50 Hz -> tuned   62.00 Hz  (124.00x)
+  dnaR intrinsic    0.25 Hz -> tuned   60.50 Hz  (242.00x)
+  mdn intrinsic    0.75 Hz -> tuned   31.25 Hz  (41.67x)
+  fwd intrinsic    1.00 Hz -> tuned   21.75 Hz  (21.75x)
+  groom intrinsic    0.42 Hz -> tuned    7.58 Hz  (18.20x)
+  escw intrinsic    0.83 Hz -> tuned    3.50 Hz  (4.20x)
+  optic intrinsic    1.49 Hz -> tuned    1.43 Hz
+  central intrinsic    2.75 Hz -> tuned    5.26 Hz
+  visual_projection intrinsic    1.42 Hz -> tuned    1.15 Hz
+### kick=0.42 pNoise=0.003 optic=0.003:0.038 central=0.008:0.046 vp=0.003:0.034 (ws 0.0032)
+population: 1.01 Hz/neuron | 140 spikes/step | 162 µs/step (1-step) | 67 µs/step (16-step batches)
+histogram: silent 83288 (59.8%) | <1 Hz 14029 (10.1%) | 1-5 Hz 37910 (27.2%) | 5-20 Hz 3680 (2.6%) | >20 Hz 348 (0.2%)
+  optic n= 77873    0.78 Hz  silent  59.3%
+  central n= 32381    2.07 Hz  silent  39.6%
+roles: loom 0.1 | gf 16.2 | dnaL 37.0 | dnaR 36.5 | mdn 11.9 | fwd 11.5 | groom 4.2 | escw 1.7 | ascend 1.2 | sens 0.0
+  population intrinsic    0.84 Hz -> tuned    1.01 Hz  (1.20x)
+  dnaL intrinsic    2.50 Hz -> tuned   37.00 Hz  (14.80x)
+  dnaR intrinsic    2.00 Hz -> tuned   36.50 Hz  (18.25x)
+  mdn intrinsic    2.50 Hz -> tuned   11.88 Hz  (4.75x)
+  fwd intrinsic    2.75 Hz -> tuned   11.50 Hz  (4.18x)
+  groom intrinsic    2.50 Hz -> tuned    4.17 Hz  (1.67x)
+  escw intrinsic    3.25 Hz -> tuned    1.67 Hz  (0.51x)
+  optic intrinsic    0.83 Hz -> tuned    0.78 Hz
+  central intrinsic    1.35 Hz -> tuned    2.07 Hz
+  visual_projection intrinsic    0.56 Hz -> tuned    0.49 Hz

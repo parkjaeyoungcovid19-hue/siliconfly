@@ -1,0 +1,22 @@
+### gfInputScale=0.40 (ws 0.0032, gj 0.5, sensGF 1.5, bgf 0.002, cmd 0.022)
+spontaneous 4s: pop 1.89 Hz/neuron, LC 0.0 Hz, DNa02 L/R 61.2/71.9 Hz, MDN 33.6 Hz, GF spikes: 33
+abrupt loom 0.4s: LC rate 114.2 Hz, GF spikes 99, first at 5 ms
+behavior 20s: walk-drive on 99%, groom-drive on 13%, DNp09 0.5-48.3 Hz, pop 1.6 Hz
+siesta 15s (scale 0.84): walk-drive on 76%
+air puff 1s: GF spikes 20
+left-eye loom: DNa L-R rate diff -15.8 -> -25.7 Hz, LC 19.2 Hz
+### gfInputScale=0.25 (ws 0.0032, gj 0.5, sensGF 1.5, bgf 0.002, cmd 0.022)
+spontaneous 4s: pop 1.88 Hz/neuron, LC 0.0 Hz, DNa02 L/R 74.7/46.9 Hz, MDN 26.6 Hz, GF spikes: 7
+abrupt loom 0.4s: LC rate 113.1 Hz, GF spikes 94, first at 5 ms
+behavior 20s: walk-drive on 100%, groom-drive on 10%, DNp09 2.1-40.0 Hz, pop 1.9 Hz
+siesta 15s (scale 0.84): walk-drive on 80%
+air puff 1s: GF spikes 9
+left-eye loom: DNa L-R rate diff -4.4 -> -16.4 Hz, LC 20.8 Hz
+### gfInputScale=0.12 (ws 0.0032, gj 0.5, sensGF 1.5, bgf 0.002, cmd 0.022)
+spontaneous 4s: pop 1.91 Hz/neuron, LC 0.0 Hz, DNa02 L/R 63.4/68.4 Hz, MDN 38.3 Hz, GF spikes: 0
+abrupt loom 0.4s: LC rate 115.3 Hz, GF spikes 101, first at 5 ms
+behavior 20s: walk-drive on 100%, groom-drive on 11%, DNp09 1.2-51.0 Hz, pop 2.0 Hz
+siesta 15s (scale 0.84): walk-drive on 81%
+air puff 1s: GF spikes 1
+left-eye loom: DNa L-R rate diff -7.2 -> -18.7 Hz, LC 19.6 Hz
+PASS: GF silent at rest, fires on loom; locomotor drive fluctuates; stim works; siesta alive

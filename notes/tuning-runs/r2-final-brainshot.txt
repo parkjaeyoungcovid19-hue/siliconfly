@@ -1,0 +1,2 @@
+metal-sim: Apple M4 Pro N=139255 E=15091983 load 45 ms compile 1 ms
+snapshot written to notes/brainshot-tuned2.png

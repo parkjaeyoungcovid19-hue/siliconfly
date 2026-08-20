@@ -1,0 +1,24 @@
+=== 0x5EED1F1F ===
+abrupt loom 0.4s: LC rate 172.5 Hz, GF spikes 142, first at 6 ms
+behavior 20s: walk-drive on 26%, groom-drive on 15%, DNp09 1.9-44.6 Hz, pop 2.5 Hz
+siesta 15s (scale 0.84): walk-drive on 9%
+air puff 1s: GF spikes 0
+left-eye loom: DNa L-R rate diff -15.4 -> -26.0 Hz, LC 32.0 Hz
+PASS realtime: 16-step batches 77 µs/step (budget 1000)
+PASS: GF silent at rest, fires on loom; locomotor drive fluctuates; stim works; siesta alive
+=== 12345 ===
+abrupt loom 0.4s: LC rate 173.1 Hz, GF spikes 149, first at 4 ms
+behavior 20s: walk-drive on 26%, groom-drive on 22%, DNp09 1.2-42.1 Hz, pop 2.1 Hz
+siesta 15s (scale 0.84): walk-drive on 0%
+air puff 1s: GF spikes 0
+left-eye loom: DNa L-R rate diff +0.1 -> -15.2 Hz, LC 30.6 Hz
+PASS realtime: 16-step batches 74 µs/step (budget 1000)
+FAIL: tune weights/noise
+=== 0xA5A5A5A5 ===
+abrupt loom 0.4s: LC rate 173.0 Hz, GF spikes 141, first at 4 ms
+behavior 20s: walk-drive on 20%, groom-drive on 52%, DNp09 0.9-43.5 Hz, pop 2.4 Hz
+siesta 15s (scale 0.84): walk-drive on 9%
+air puff 1s: GF spikes 0
+left-eye loom: DNa L-R rate diff +7.5 -> -19.7 Hz, LC 32.4 Hz
+PASS realtime: 16-step batches 76 µs/step (budget 1000)
+PASS: GF silent at rest, fires on loom; locomotor drive fluctuates; stim works; siesta alive

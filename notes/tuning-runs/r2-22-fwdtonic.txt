@@ -1,0 +1,10 @@
+### baselineFwd=0.052
+behavior 20s: walk-drive on 46%, groom-drive on 15%, DNp09 1.0-51.6 Hz, pop 2.2 Hz
+  TEMP fwd p05   11.87  p25   19.20  p50   24.37  p75   30.14  p95   38.48  mean   24.64
+siesta 15s (scale 0.84): walk-drive on 4%
+PASS: GF silent at rest, fires on loom; locomotor drive fluctuates; stim works; siesta alive
+### baselineFwd=0.058
+behavior 20s: walk-drive on 56%, groom-drive on 14%, DNp09 2.5-54.3 Hz, pop 2.3 Hz
+  TEMP fwd p05   14.14  p25   21.14  p50   26.54  p75   32.14  p95   40.48  mean   26.73
+siesta 15s (scale 0.84): walk-drive on 7%
+PASS: GF silent at rest, fires on loom; locomotor drive fluctuates; stim works; siesta alive

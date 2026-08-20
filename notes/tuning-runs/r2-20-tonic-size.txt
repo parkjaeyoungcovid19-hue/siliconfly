@@ -1,0 +1,33 @@
+### optic=0.026:0.044 central=0.028:0.050
+spontaneous 4s: pop 2.20 Hz/neuron, LC 0.0 Hz, DNa02 L/R 51.8/48.1 Hz, MDN 27.5 Hz, GF spikes: 0
+abrupt loom 0.4s: LC rate 115.0 Hz, GF spikes 93, first at 4 ms
+behavior 20s: walk-drive on 22%, groom-drive on 15%, DNp09 1.6-49.3 Hz, pop 1.9 Hz
+  TEMP fwd p05    9.45  p25   15.20  p50   19.69  p75   24.47  p95   33.10  mean   20.15
+  TEMP groom p05    0.62  p25    1.69  p50    2.74  p75    4.09  p95    6.56  mean    3.05
+  TEMP mdn p05   11.51  p25   20.24  p50   25.49  p75   30.73  p95   37.97  mean   25.30
+  TEMP pop p05    1.94  p25    2.06  p50    2.18  p75    2.32  p95    2.65  mean    2.28
+siesta 15s (scale 0.84): walk-drive on 2%
+air puff 1s: GF spikes 0
+left-eye loom: DNa L-R rate diff -8.6 -> -18.8 Hz, LC 19.1 Hz
+population: 2.19 Hz/neuron | 304 spikes/step | 211 µs/step (1-step) | 75 µs/step (16-step batches)
+histogram: silent 77194 (55.4%) | <1 Hz 13317 (9.6%) | 1-5 Hz 28291 (20.3%) | 5-20 Hz 18259 (13.1%) | >20 Hz 2194 (1.6%)
+  population intrinsic    1.43 Hz -> tuned    2.19 Hz  (1.53x)
+  optic intrinsic    1.16 Hz -> tuned    1.15 Hz
+  central intrinsic    2.99 Hz -> tuned    5.81 Hz
+### optic=0.026:0.045 central=0.028:0.052
+spontaneous 4s: pop 2.43 Hz/neuron, LC 0.0 Hz, DNa02 L/R 44.3/42.5 Hz, MDN 19.3 Hz, GF spikes: 0
+abrupt loom 0.4s: LC rate 113.7 Hz, GF spikes 98, first at 4 ms
+behavior 20s: walk-drive on 8%, groom-drive on 12%, DNp09 0.4-41.0 Hz, pop 2.4 Hz
+  TEMP fwd p05    5.80  p25   11.88  p50   15.79  p75   20.24  p95   27.05  mean   16.14
+  TEMP groom p05    0.69  p25    1.62  p50    2.60  p75    3.82  p95    6.17  mean    2.88
+  TEMP mdn p05   11.91  p25   19.08  p50   24.06  p75   29.06  p95   36.00  mean   24.02
+  TEMP pop p05    2.22  p25    2.33  p50    2.42  p75    2.55  p95    2.87  mean    2.53
+siesta 15s (scale 0.84): walk-drive on 5%
+air puff 1s: GF spikes 0
+left-eye loom: DNa L-R rate diff -11.8 -> -15.3 Hz, LC 19.7 Hz
+PASS: GF silent at rest, fires on loom; locomotor drive fluctuates; stim works; siesta alive
+population: 2.43 Hz/neuron | 339 spikes/step | 213 µs/step (1-step) | 78 µs/step (16-step batches)
+histogram: silent 75146 (54.0%) | <1 Hz 12714 (9.1%) | 1-5 Hz 27829 (20.0%) | 5-20 Hz 21013 (15.1%) | >20 Hz 2553 (1.8%)
+  population intrinsic    1.86 Hz -> tuned    2.43 Hz  (1.31x)
+  optic intrinsic    1.41 Hz -> tuned    1.37 Hz
+  central intrinsic    4.16 Hz -> tuned    6.33 Hz

@@ -1,5 +1,8 @@
-DesktopFly
+SiliconFly
 .DS_Store
 *.log
 nohup.out
 /*.png
+reference/
+cache/
+.venv/

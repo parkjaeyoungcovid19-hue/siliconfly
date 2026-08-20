@@ -1,6 +1,6 @@
-// BrainView.swift — live visualization of the real FlyWire v783 brain:
-// 23k real soma positions as a rotating point cloud, the escape circuit
-// highlighted, and LIF spikes flashing at real neuron locations.
+// BrainView.swift — live visualization of the real FlyWire v783 brain: all
+// 139,255 somas as a rotating point cloud, the escape circuit highlighted on
+// top, and LIF spikes flashing at real neuron locations.
 
 import Cocoa
 import SceneKit
@@ -46,6 +46,7 @@ private let CLASS_COLORS: [SIMD4<Float>] = [
     SIMD4(0.20, 0.45, 0.18, 1),   // ascending — green
     SIMD4(0.55, 0.14, 0.14, 1),   // motor — red
     SIMD4(0.50, 0.25, 0.40, 1),   // endocrine — pink
+    SIMD4(0.17, 0.42, 0.26, 1),   // sensory_ascending — teal-green
 ]
 
 struct BrainScene {
@@ -55,28 +56,42 @@ struct BrainScene {
     let flashPool: [SCNNode]
 }
 
-func buildBrainScene(points: BrainPointsFile, sim: LIFSim) -> BrainScene {
+// Tuning. The cloud is 139,255 additive sprites in a 340x280 panel, 6x the
+// strided cloud this window was drawn for, so the palette is dimmed and the
+// sprites shrunk rather than neurons dropped. Flashes: the bus carries up to 12
+// sampled spikers per simulated ms (~245 of 139k fire each ms), i.e. hundreds
+// of events per rendered frame — light a spread-out slice of them so the panel
+// twinkles instead of strobing. ~65 halos live at once (6 x 30 fps x 0.36 s);
+// the pool is big enough that a node is never recycled mid-fade.
+private let CLOUD_DIM: Float = 0.25
+private let FLASHES_PER_FRAME = 6
+private let FLASH_FADE = 0.36, FLASH_FADE_GF = 0.7
+private let FLASH_POOL = 96
+private let PICK_RADIUS: Float = 0.6   // world units; ~370 somas at median density
+private let PICK_MAX = 400             // cap where the brain packs tighter
+
+func buildBrainScene(connectome: Connectome, sim: MetalSim) -> BrainScene {
     let scene = SCNScene()
     scene.background.contents = NSColor(calibratedRed: 0.03, green: 0.035, blue: 0.06, alpha: 1)
 
     let group = SCNNode()
     scene.rootNode.addChildNode(group)
 
-    // full brain: 23k real somas
-    var pts: [SIMD3<Float>] = []
-    var cols: [SIMD4<Float>] = []
-    pts.reserveCapacity(points.points.count)
-    for p in points.points where p.count >= 4 {
-        pts.append(SIMD3(p[0], p[1], p[2]))
-        let ci = Int(p[3])
-        cols.append(ci < CLASS_COLORS.count ? CLASS_COLORS[ci] : SIMD4(0.3, 0.3, 0.3, 1))
+    // every soma in the connectome, coloured by super_class
+    let cols: [SIMD4<Float>] = (0..<connectome.n).map { i in
+        let ci = Int(connectome.superClass[i])
+        var c = ci < CLASS_COLORS.count ? CLASS_COLORS[ci] : SIMD4<Float>(0.3, 0.3, 0.3, 1)
+        c *= CLOUD_DIM
+        c.w = 1
+        return c
     }
-    group.addChildNode(SCNNode(geometry: pointCloud(positions: pts, colors: cols, rMin: 0.7, rMax: 1.6)))
+    group.addChildNode(SCNNode(geometry: pointCloud(positions: connectome.positions, colors: cols,
+                                                    rMin: 0.5, rMax: 1.1)))
 
-    // circuit overlay: brighter points at the 652 simulated neurons
+    // circuit overlay: brighter points at the 378 role-tagged neurons
     var cpts: [SIMD3<Float>] = []
     var ccols: [SIMD4<Float>] = []
-    for i in 0..<sim.n {
+    for i in connectome.roleIndices.dropFirst().joined() {   // [0] is "other"
         cpts.append(sim.positions[i])
         switch sim.roles[i] {
         case "lc4", "lplc2":  ccols.append(SIMD4(0.15, 0.85, 1.0, 1))
@@ -86,13 +101,13 @@ func buildBrainScene(points: BrainPointsFile, sim: LIFSim) -> BrainScene {
         case "dng11":         ccols.append(SIMD4(0.75, 0.55, 1.0, 1))
         case "escw":          ccols.append(SIMD4(1.0, 0.35, 0.25, 1))
         case "gf":            ccols.append(SIMD4(1.0, 0.95, 0.4, 1))
-        default:              ccols.append(SIMD4(0.45, 0.45, 0.50, 1))
+        default:              ccols.append(SIMD4(0.45, 0.45, 0.50, 1))   // ascend / sens
         }
     }
     group.addChildNode(SCNNode(geometry: pointCloud(positions: cpts, colors: ccols, rMin: 1.6, rMax: 2.6)))
 
     // the two giant fibers get actual glowing markers
-    for i in 0..<sim.n where sim.roles[i] == "gf" {
+    for i in connectome.roleIndices[Int(Role.gf)] {
         let s = SCNSphere(radius: 0.28)
         let m = SCNMaterial()
         m.lightingModel = .constant
@@ -116,7 +131,7 @@ func buildBrainScene(points: BrainPointsFile, sim: LIFSim) -> BrainScene {
     fm.emission.contents = NSColor(calibratedRed: 0.75, green: 0.95, blue: 1.0, alpha: 1)
     fm.blendMode = .add
     flashGeo.materials = [fm]
-    for _ in 0..<48 {
+    for _ in 0..<FLASH_POOL {
         let node = SCNNode(geometry: flashGeo)
         node.isHidden = true
         group.addChildNode(node)
@@ -141,11 +156,11 @@ func buildBrainScene(points: BrainPointsFile, sim: LIFSim) -> BrainScene {
 
 // Drains the spike bus inside the brain view's own render loop.
 final class BrainRenderDriver: NSObject, SCNSceneRendererDelegate {
-    let sim: LIFSim
+    let sim: MetalSim
     let flashPool: [SCNNode]
     private var next = 0
 
-    init(sim: LIFSim, flashPool: [SCNNode]) {
+    init(sim: MetalSim, flashPool: [SCNNode]) {
         self.sim = sim
         self.flashPool = flashPool
     }
@@ -160,12 +175,22 @@ final class BrainRenderDriver: NSObject, SCNSceneRendererDelegate {
         node.removeAllActions()
         node.opacity = isGF ? 1.0 : 0.8
         node.scale = isGF ? SCNVector3(3.2, 3.2, 3.2) : SCNVector3(1, 1, 1)
-        node.runAction(.sequence([.fadeOut(duration: isGF ? 0.6 : 0.28), .hide()]))
+        node.runAction(.sequence([.fadeOut(duration: isGF ? FLASH_FADE_GF : FLASH_FADE), .hide()]))
     }
 
     func renderer(_ renderer: SCNSceneRenderer, updateAtTime time: TimeInterval) {
         guard let bus = sim.spikeBus else { return }
-        for e in bus.popAll() { flash(neuron: e.neuron, isGF: e.isGF) }
+        let batch = bus.popAll()
+        guard !batch.isEmpty else { return }
+        // Take the slice evenly across the batch so the halos land all over the
+        // brain rather than all inside the last simulated millisecond, and never
+        // drop a giant fiber (only ~5% of its spikes survive the GPU sampler).
+        let step = max(1, batch.count / FLASHES_PER_FRAME)
+        var lit = 0
+        for (k, e) in batch.enumerated() where e.isGF || (k % step == 0 && lit < FLASHES_PER_FRAME) {
+            if !e.isGF { lit += 1 }
+            flash(neuron: e.neuron, isGF: e.isGF)
+        }
     }
 }
 
@@ -195,15 +220,17 @@ final class BrainSCNView: SCNView {
 final class BrainWindowController {
     let panel: NSPanel
     let driver: BrainRenderDriver
-    private let sim: LIFSim
+    private let sim: MetalSim
+    private let conn: Connectome
     private let brainGroup: SCNNode
     private let view: BrainSCNView
     private let stimRing: SCNNode
     private let label = NSTextField(labelWithString: "")
     private var labelHider: DispatchWorkItem?
 
-    init(points: BrainPointsFile, sim: LIFSim, screen: NSScreen) {
+    init(connectome: Connectome, sim: MetalSim, screen: NSScreen) {
         self.sim = sim
+        self.conn = connectome
         let size = NSSize(width: 340, height: 280)
         let vis = screen.visibleFrame
         let origin = NSPoint(x: vis.maxX - size.width - 18, y: vis.minY + 18)
@@ -218,12 +245,12 @@ final class BrainWindowController {
         panel.isMovableByWindowBackground = true
         panel.collectionBehavior = [.canJoinAllSpaces]
 
-        let bs = buildBrainScene(points: points, sim: sim)
+        let bs = buildBrainScene(connectome: connectome, sim: sim)
         brainGroup = bs.brainGroup
         driver = BrainRenderDriver(sim: sim, flashPool: bs.flashPool)
 
         // reusable stimulation ring
-        let ringGeo = SCNSphere(radius: 2.2)
+        let ringGeo = SCNSphere(radius: 0.9)
         let rm = SCNMaterial()
         rm.lightingModel = .constant
         rm.diffuse.contents = NSColor.black
@@ -269,41 +296,47 @@ final class BrainWindowController {
         let b = group.simdConvertPosition(SIMD3<Float>(Float(far.x), Float(far.y), Float(far.z)), from: nil)
         let d = simd_normalize(b - a)
 
-        // nearest circuit neuron to the click ray
+        // Nearest neuron to the click ray. A ray through the slab grazes hundreds
+        // of somas, so break the near-tie towards the camera: 0.002 x depth is
+        // worth about a 0.2-unit miss, i.e. a few pixels.
         var best = -1
-        var bestPerp = Float.greatestFiniteMagnitude
+        var bestScore = Float.greatestFiniteMagnitude
         for i in 0..<sim.n {
             let ap = sim.positions[i] - a
-            let perp = simd_length(ap - simd_dot(ap, d) * d)
-            if perp < bestPerp { bestPerp = perp; best = i }
+            let t = simd_dot(ap, d)
+            let score = simd_length_squared(ap - t * d) + t * 0.002
+            if score < bestScore { bestScore = score; best = i }
         }
         guard best >= 0 else { return }
         let anchor = sim.positions[best]
 
-        var picked = (0..<sim.n).filter { simd_distance(sim.positions[$0], anchor) < 2.2 }
-        if picked.count < 4 {
-            picked = (0..<sim.n).sorted {
-                simd_distance(sim.positions[$0], anchor) < simd_distance(sim.positions[$1], anchor)
-            }.prefix(6).map { $0 }
-        } else if picked.count > 60 {
-            picked = picked.sorted {
-                simd_distance(sim.positions[$0], anchor) < simd_distance(sim.positions[$1], anchor)
-            }.prefix(60).map { $0 }
+        // its neighbourhood: 139k neurons, so measure once and sort the shortlist
+        var neigh: [(d: Float, i: Int)] = []
+        for i in 0..<sim.n {
+            let dd = simd_distance_squared(sim.positions[i], anchor)
+            if dd < PICK_RADIUS * PICK_RADIUS { neigh.append((dd, i)) }
         }
+        neigh.sort { $0.d < $1.d }
+        let picked = neigh.prefix(PICK_MAX).map { $0.i }   // never empty: the anchor is in it
 
         sim.stimulate(picked, strength: 0.25, durationMs: 400)
-        for i in picked.prefix(16) { driver.flash(neuron: i, isGF: false) }
+        for k in stride(from: 0, to: picked.count, by: max(1, picked.count / 24)) {
+            driver.flash(neuron: picked[k], isGF: false)   // light the whole ball, not its core
+        }
         flashRing(at: anchor)
         showLabel(regionName(for: picked))
     }
 
+    /// A role population is 2-210 neurons out of 139k, so it never wins a plain
+    /// majority of a cluster: name the role if the click reached one at all
+    /// (the giant fiber first), otherwise the cluster's dominant cell types.
     private func regionName(for picked: [Int]) -> String {
         var counts: [String: Int] = [:]
-        for i in picked { counts[sim.roles[i], default: 0] += 1 }
-        let major = counts.max { $0.value < $1.value }!.key
+        for i in picked where conn.role[i] != Role.other { counts[conn.roleName[i], default: 0] += 1 }
+        let major = counts["gf"] != nil ? "gf" : (counts.max { $0.value < $1.value }?.key ?? "other")
         let sideSuffix: (String) -> String = { role in
-            let l = picked.filter { self.sim.roles[$0] == role && self.sim.positions[$0].x < 0 }.count
-            let r = picked.filter { self.sim.roles[$0] == role }.count - l
+            let l = picked.filter { self.conn.roleName[$0] == role && self.sim.positions[$0].x < 0 }.count
+            let r = picked.filter { self.conn.roleName[$0] == role }.count - l
             return l == r ? "" : (l > r ? " · left" : " · right")
         }
         switch major {
@@ -314,10 +347,19 @@ final class BrainWindowController {
         case "dng11":        return "⚡ Grooming command (DNg11)"
         case "escw":         return "⚡ Escape-wing DNs (DNp02/04/11)"
         case "mdn":          return "⚡ Moonwalker neurons (MDN)"
+        case "ascend":       return "⚡ Ascending neurons (leg feedback)"
+        case "sens":         return "⚡ Sensory afferents (wind/tap)"
         default:
-            var t = sim.types[picked.first(where: { sim.roles[$0] == "other" }) ?? picked[0]]
-            if t.isEmpty || t == "?" { t = "central" }
-            return "⚡ \(t) neurons"
+            var types: [String: Int] = [:], classes: [String: Int] = [:]
+            for i in picked {
+                types[conn.typeName[i], default: 0] += 1
+                classes[conn.superClassNames[Int(conn.superClass[i])], default: 0] += 1
+            }
+            let region = classes.max { $0.value < $1.value }?.key ?? "brain"
+            let top = types.sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }
+                           .prefix(2).map(\.key).filter { $0 != region && $0 != "?" }
+            return top.isEmpty ? "⚡ \(picked.count) \(region) neurons"
+                               : "⚡ \(top.joined(separator: " + ")) · \(region) (\(picked.count))"
         }
     }
 

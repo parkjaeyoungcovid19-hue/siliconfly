@@ -1,0 +1,33 @@
+=== seed 0x5EED1F1F ===
+spontaneous 4s: pop 1.72 Hz/neuron, LC 0.0 Hz, DNa02 L/R 45.0/37.5 Hz, MDN 15.7 Hz, GF spikes: 0
+abrupt loom 0.4s: LC rate 172.5 Hz, GF spikes 147, first at 3 ms
+behavior 20s: walk-drive on 30%, groom-drive on 8%, DNp09 0.3-39.1 Hz, pop 1.7 Hz
+siesta 15s (scale 0.84): walk-drive on 40%
+air puff 1s: GF spikes 1
+left-eye loom: DNa L-R rate diff -16.1 -> -22.5 Hz, LC 31.5 Hz
+click probes: GF cluster -> spike yes, DNg11 cluster -> groom rate 196 Hz
+state check: 200 steps, 52731 spikers (71 role-tagged) match membrane/refractory/histogram -> consistent
+PASS realtime: 16-step batches 75 µs/step (budget 1000)
+PASS: GF silent at rest, fires on loom; locomotor drive fluctuates; stim works; siesta alive
+=== seed 12345 ===
+spontaneous 4s: pop 1.74 Hz/neuron, LC 0.0 Hz, DNa02 L/R 49.7/43.5 Hz, MDN 20.2 Hz, GF spikes: 0
+abrupt loom 0.4s: LC rate 172.5 Hz, GF spikes 149, first at 3 ms
+behavior 20s: walk-drive on 40%, groom-drive on 18%, DNp09 1.5-45.2 Hz, pop 1.7 Hz
+siesta 15s (scale 0.84): walk-drive on 17%
+air puff 1s: GF spikes 0
+left-eye loom: DNa L-R rate diff -18.2 -> -32.1 Hz, LC 33.1 Hz
+click probes: GF cluster -> spike yes, DNg11 cluster -> groom rate 200 Hz
+state check: 200 steps, 42292 spikers (40 role-tagged) match membrane/refractory/histogram -> consistent
+PASS realtime: 16-step batches 73 µs/step (budget 1000)
+PASS: GF silent at rest, fires on loom; locomotor drive fluctuates; stim works; siesta alive
+=== seed 0xA5A5A5A5 ===
+spontaneous 4s: pop 1.79 Hz/neuron, LC 0.0 Hz, DNa02 L/R 35.0/41.3 Hz, MDN 18.3 Hz, GF spikes: 0
+abrupt loom 0.4s: LC rate 172.2 Hz, GF spikes 157, first at 3 ms
+behavior 20s: walk-drive on 29%, groom-drive on 41%, DNp09 1.0-38.3 Hz, pop 1.8 Hz
+siesta 15s (scale 0.84): walk-drive on 42%
+air puff 1s: GF spikes 0
+left-eye loom: DNa L-R rate diff +13.7 -> -20.2 Hz, LC 31.3 Hz
+click probes: GF cluster -> spike yes, DNg11 cluster -> groom rate 200 Hz
+state check: 200 steps, 49506 spikers (70 role-tagged) match membrane/refractory/histogram -> consistent
+PASS realtime: 16-step batches 75 µs/step (budget 1000)
+PASS: GF silent at rest, fires on loom; locomotor drive fluctuates; stim works; siesta alive

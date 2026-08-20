@@ -1,0 +1,52 @@
+metal-sim: Apple M4 Pro N=139255 E=15091983 load 35 ms compile 1 ms
+metal-sim: Apple M4 Pro N=139255 E=15091983 load 37 ms compile 0 ms
+brainstats: 139255 neurons | 15091983 edges | Apple M4 Pro | 5 s of rest after 1 s settle
+params: weightScale 0.00080 modScale 0.50 gap 6.0 pNoise 0.0030 kick 0.420 loomGain 0.300 puffGain 0.120 ascendGain 0.090
+population: 1.53 Hz/neuron | 212 spikes/step | 200 µs/step (1-step) | 65 µs/step (16-step batches)
+histogram: silent 66096 (47.5%) | <1 Hz 31054 (22.3%) | 1-5 Hz 40241 (28.9%) | 5-20 Hz 829 (0.6%) | >20 Hz 1035 (0.7%)
+super classes (mean Hz, % silent):
+  optic n= 77873    0.83 Hz  silent  45.3%
+  central n= 32381    4.29 Hz  silent  25.5%
+  sensory n= 16938    0.01 Hz  silent  98.7%
+  visual_projection n=  7684    0.55 Hz  silent  52.5%
+  visual_centrifugal n=   522    1.13 Hz  silent  34.1%
+  descending n=  1305    1.44 Hz  silent  31.0%
+  ascending n=  1750    1.28 Hz  silent  30.3%
+  motor n=   110    0.81 Hz  silent  41.8%
+  endocrine n=    80    0.85 Hz  silent  45.0%
+  sensory_ascending n=   612    0.00 Hz  silent  98.5%
+roles: loom 0.0 | gf 0.0 | dnaL 3.2 | dnaR 3.8 | mdn 2.8 | fwd 2.9 | groom 2.6 | escw 2.8 | ascend 1.0 | sens 0.0
+top cell types by mean rate (n >= 4):
+  lLN1_bc n=   30   498.22 Hz
+  lLN2X03 n=    6   398.43 Hz
+  lLN2X04 n=    4   356.60 Hz
+  lLN2T_e n=    4   341.65 Hz
+  lLN2T_c n=    4   301.50 Hz
+  lLN2X05 n=    4   296.95 Hz
+  lLN2X11 n=    4   272.05 Hz
+  lLN2F_b n=    4   248.25 Hz
+  lLN2F_a n=    4   244.50 Hz
+  lLN2X12 n=   13   235.58 Hz
+intrinsic only (weightScale 0): population 0.84 Hz/neuron | 117 spikes/step
+network contribution (intrinsic -> tuned, x = ratio):
+  population intrinsic    0.84 Hz -> tuned    1.53 Hz  (1.81x)
+  loom intrinsic    0.02 Hz -> tuned    0.02 Hz  (1.00x)
+  gf intrinsic    0.00 Hz -> tuned    0.00 Hz  (-)
+  dnaL intrinsic    2.40 Hz -> tuned    3.20 Hz  (1.33x)
+  dnaR intrinsic    2.90 Hz -> tuned    3.80 Hz  (1.31x)
+  mdn intrinsic    2.75 Hz -> tuned    2.75 Hz  (1.00x)
+  fwd intrinsic    2.90 Hz -> tuned    2.90 Hz  (1.00x)
+  groom intrinsic    2.57 Hz -> tuned    2.57 Hz  (1.00x)
+  escw intrinsic    2.83 Hz -> tuned    2.83 Hz  (1.00x)
+  ascend intrinsic    1.03 Hz -> tuned    1.03 Hz  (1.00x)
+  sens intrinsic    0.00 Hz -> tuned    0.00 Hz  (-)
+  optic intrinsic    0.83 Hz -> tuned    0.83 Hz
+  central intrinsic    1.35 Hz -> tuned    4.29 Hz
+  sensory intrinsic    0.00 Hz -> tuned    0.01 Hz
+  visual_projection intrinsic    0.56 Hz -> tuned    0.55 Hz
+  visual_centrifugal intrinsic    1.11 Hz -> tuned    1.13 Hz
+  descending intrinsic    1.26 Hz -> tuned    1.44 Hz
+  ascending intrinsic    1.28 Hz -> tuned    1.28 Hz
+  motor intrinsic    0.80 Hz -> tuned    0.81 Hz
+  endocrine intrinsic    0.84 Hz -> tuned    0.85 Hz
+  sensory_ascending intrinsic    0.00 Hz -> tuned    0.00 Hz

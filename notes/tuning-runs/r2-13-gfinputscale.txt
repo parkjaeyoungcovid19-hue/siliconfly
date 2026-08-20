@@ -1,0 +1,16 @@
+### ws=0.0032 gfInputScale=0.5 baselineGF=0.002 cmd=0.022
+spontaneous 4s: pop 1.92 Hz/neuron, LC 0.0 Hz, DNa02 L/R 75.5/64.7 Hz, MDN 40.3 Hz, GF spikes: 37
+abrupt loom 0.4s: LC rate 113.5 Hz, GF spikes 85, first at 10 ms
+behavior 20s: walk-drive on 99%, groom-drive on 14%, DNp09 0.8-46.6 Hz, pop 1.9 Hz
+siesta 15s (scale 0.84): walk-drive on 76%
+air puff 1s: GF spikes 28
+left-eye loom: DNa L-R rate diff +1.8 -> -13.1 Hz, LC 19.5 Hz
+click probes: GF cluster -> spike yes, DNg11 cluster -> groom rate 198 Hz
+### ws=0.0032 gfInputScale=0.5 baselineGF=-0.020 cmd=0.022
+spontaneous 4s: pop 1.94 Hz/neuron, LC 0.0 Hz, DNa02 L/R 45.5/43.3 Hz, MDN 19.0 Hz, GF spikes: 33
+abrupt loom 0.4s: LC rate 115.2 Hz, GF spikes 84, first at 8 ms
+behavior 20s: walk-drive on 99%, groom-drive on 13%, DNp09 1.0-47.2 Hz, pop 2.0 Hz
+siesta 15s (scale 0.84): walk-drive on 79%
+air puff 1s: GF spikes 19
+left-eye loom: DNa L-R rate diff -14.5 -> -13.5 Hz, LC 20.1 Hz
+click probes: GF cluster -> spike yes, DNg11 cluster -> groom rate 199 Hz

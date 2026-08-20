@@ -1,0 +1,303 @@
+===================================================================
+DesktopFly diagnostics capture — docs pass (notes/09-docs.md)
+date: Tue Aug 18 23:38:27 EDT 2026
+machine: Apple M4 Pro / macOS 26.6.1
+swift-driver version: 1.127.14.1 swift: Target: arm64-apple-macosx26.0
+build: ./build.sh (bare swiftc, -O -swift-version 5)
+seed:  shipped default 0x5EED1F1F (no --seed given)
+===================================================================
+
+###################################################################
+### ./DesktopFly --simtest   (RSS sampled from a second shell, below)
+###################################################################
+metal-sim: Apple M4 Pro N=139255 E=15091983 load 40 ms compile 1 ms
+metal-sim: 30000 steps in 8592 ms (286 µs/step, 229 spikes/step avg)
+connectome: 139255 neurons | 15091983 edges | Apple M4 Pro | fixed point Q16
+groups: loom L/R 162/152 | GF: 2 | DNa L/R: 2/2 | MDN: 4 | DNp09: 2 | DNg11: 6 | escW: 6 | ascend: 24 | sens: 16
+spontaneous 4s: pop 1.72 Hz/neuron, LC 0.0 Hz, DNa02 L/R 45.0/37.5 Hz, MDN 15.7 Hz, GF spikes: 0
+abrupt loom 0.4s: LC rate 172.5 Hz, GF spikes 147, first at 3 ms
+behavior 20s: walk-drive on 30%, groom-drive on 8%, DNp09 0.3-39.1 Hz, pop 1.7 Hz
+siesta 15s (scale 0.84): walk-drive on 40%
+air puff 1s: GF spikes 1
+left-eye loom: DNa L-R rate diff -16.1 -> -22.5 Hz, LC 31.5 Hz
+click probes: GF cluster -> spike yes, DNg11 cluster -> groom rate 196 Hz
+state check: 200 steps, 52731 spikers (71 role-tagged) match membrane/refractory/histogram -> consistent
+bench 16-step batches: 69 µs/step, 249 spikes/step
+bench  1-step batches: 192 µs/step, 240 spikes/step
+PASS realtime: 16-step batches 69 µs/step (budget 1000)
+PASS: GF silent at rest, fires on loom; locomotor drive fluctuates; stim works; siesta alive
+### exit=0
+### peak RSS during --simtest: 247216 KB (241 MB)   [ps -o rss=]
+
+###################################################################
+### ./DesktopFly --brainstats 4
+###################################################################
+metal-sim: Apple M4 Pro N=139255 E=15091983 load 41 ms compile 1 ms
+metal-sim: Apple M4 Pro N=139255 E=15091983 load 41 ms compile 0 ms
+brainstats: 139255 neurons | 15091983 edges | Apple M4 Pro | 4 s of rest after 1 s settle
+params: weightScale 0.00320 modScale 0.50 gap 0.5 pNoise 0.0050 kick 0.250 loomGain 0.320 puffGain 0.050 ascendGain 0.090
+population: 1.75 Hz/neuron | 244 spikes/step | 206 µs/step (1-step) | 76 µs/step (16-step batches)
+histogram: silent 58960 (42.3%) | <1 Hz 32256 (23.2%) | 1-5 Hz 36541 (26.2%) | 5-20 Hz 10356 (7.4%) | >20 Hz 1142 (0.8%)
+super classes (mean Hz, % silent):
+  optic n= 77873    1.28 Hz  silent  37.0%
+  central n= 32381    3.76 Hz  silent  24.2%
+  sensory n= 16938    0.00 Hz  silent 100.0%
+  visual_projection n=  7684    1.07 Hz  silent  46.7%
+  visual_centrifugal n=   522    5.00 Hz  silent  22.0%
+  descending n=  1305    7.14 Hz  silent  22.0%
+  ascending n=  1750    1.15 Hz  silent  40.8%
+  motor n=   110    6.98 Hz  silent  10.9%
+  endocrine n=    80    1.32 Hz  silent  40.0%
+  sensory_ascending n=   612    0.00 Hz  silent 100.0%
+roles: loom 0.0 | gf 0.0 | dnaL 50.4 | dnaR 48.1 | mdn 18.8 | fwd 15.5 | groom 0.9 | escw 0.5 | ascend 1.1 | sens 0.0
+top cell types by mean rate (n >= 4):
+  LAL112 n=    4    61.00 Hz
+  DNa13 n=    4    40.69 Hz
+  AVLP479 n=    4    39.56 Hz
+  AVLP465c n=    4    38.38 Hz
+  Pm14 n=    4    38.25 Hz
+  PS059 n=    4    37.31 Hz
+  CB1620 n=    4    36.56 Hz
+  LAL074 n=    4    34.88 Hz
+  cL21 n=    4    33.88 Hz
+  FB4Y n=    6    33.46 Hz
+hotspot LAL112 (n=4, 61 Hz):
+  own nt bytes: GABA 4 (sends +0/-4)
+  positive in-weight 4.0 total, 0% of it from other LAL112
+  class-wide: 12614 UNKNOWN-nt neurons send + (9.1% of the brain, 0.84 Hz mean); they are 26 of the 1106 neurons above 20 Hz (2%)
+  nt bytes of ALL 1106 neurons above 20 Hz: ACH 439, GABA 330, GLUT 210, UNKNOWN 58, DA 51, OCT 15, SER 3
+  top presynaptic sources by summed +weight (per target neuron):
+    CRE011 nt ACH sends +   60.25 Hz  +1.25
+    CRE011 nt ACH sends +   55.00 Hz  +1.14
+    LHPV5e3 nt ACH sends +   38.50 Hz  +0.30
+    LHPV5e3 nt ACH sends +   47.50 Hz  +0.29
+    CB3026 nt ACH sends +    0.50 Hz  +0.04
+    LAL017 nt ACH sends +   12.75 Hz  +0.04
+    LAL017 nt ACH sends +    9.75 Hz  +0.04
+    CB3026 nt ACH sends +    3.50 Hz  +0.03
+    CB3026 nt ACH sends +    0.50 Hz  +0.03
+    CB4113 nt ACH sends +    3.25 Hz  +0.03
+in-weight per neuron (threshold units, 1.0 = one full volley fires it):
+  gf exc    +2.30  inh    -0.91  net    +1.39  [electrical LC/sens path +1.78]
+  dnaL exc   +17.46  inh   -11.47  net    +5.99
+  dnaR exc   +18.79  inh   -12.80  net    +5.99
+  mdn exc    +4.90  inh    -3.46  net    +1.43
+  fwd exc    +9.87  inh    -6.57  net    +3.30
+  groom exc    +0.99  inh    -0.89  net    +0.09
+  escw exc    +6.25  inh    -4.00  net    +2.25
+  loom exc    +2.27  inh    -1.00  net    +1.27
+intrinsic only (weightScale 0): population 1.34 Hz/neuron | 186 spikes/step
+network contribution (intrinsic -> tuned, x = ratio):
+  population intrinsic    1.34 Hz -> tuned    1.75 Hz  (1.31x)
+  loom intrinsic    0.02 Hz -> tuned    0.00 Hz  (0.05x)
+  gf intrinsic    0.00 Hz -> tuned    0.00 Hz  (-)
+  dnaL intrinsic    0.00 Hz -> tuned   50.38 Hz  (inf)
+  dnaR intrinsic    0.00 Hz -> tuned   48.12 Hz  (inf)
+  mdn intrinsic    0.00 Hz -> tuned   18.75 Hz  (inf)
+  fwd intrinsic    0.50 Hz -> tuned   15.50 Hz  (31.00x)
+  groom intrinsic    0.00 Hz -> tuned    0.92 Hz  (inf)
+  escw intrinsic    0.04 Hz -> tuned    0.54 Hz  (13.00x)
+  ascend intrinsic    0.73 Hz -> tuned    1.14 Hz  (1.56x)
+  sens intrinsic    0.00 Hz -> tuned    0.00 Hz  (-)
+  optic intrinsic    1.38 Hz -> tuned    1.28 Hz
+  central intrinsic    1.98 Hz -> tuned    3.76 Hz
+  sensory intrinsic    0.00 Hz -> tuned    0.00 Hz
+  visual_projection intrinsic    1.30 Hz -> tuned    1.07 Hz
+  visual_centrifugal intrinsic    1.37 Hz -> tuned    5.00 Hz
+  descending intrinsic    1.16 Hz -> tuned    7.14 Hz
+  ascending intrinsic    1.27 Hz -> tuned    1.15 Hz
+  motor intrinsic    1.30 Hz -> tuned    6.98 Hz
+  endocrine intrinsic    1.34 Hz -> tuned    1.32 Hz
+  sensory_ascending intrinsic    0.00 Hz -> tuned    0.00 Hz
+### exit=0 wall=2s
+
+###################################################################
+### ./DesktopFly --gpucheck
+###################################################################
+metal-sim: Apple M4 Pro N=139255 E=15091983 load 40 ms compile 1 ms
+== gpucheck: independent CPU reference vs the Metal whole-brain sim ==
+connectome: 139255 neurons, 15091983 edges | fixed point Q16 | Apple M4 Pro | seed 0x5eed1f1f
+rng: LIF.metal pcg() transcription vs MetalSim.pcgHash -> identical
+weights: 15091983 quantized edges, 0 differ from the GPU buffer (max 0 Q18 units, independent factor order)
+arithmetic probe — 120 steps at rest, MetalSim.init's own baselines:
+  0 plain a*b+c  120 steps | spikes+gf = (gf 0) | refr = | groups = | rates = | max|Δv| 7.15e-07 (n69919 @step 55) | FAIL
+first divergence at step 2 (simMs 2/2)
+  max |Δv| 2.98023e-08 at n339 (role other): ref 0.311376184 gpu 0.311376154 — ≈ 0 fixed-point units: weight quantization / accumulation
+  1 fma leak  120 steps | spikes+gf = (gf 0) | refr = | groups = | rates = | max|Δv| 0 | ok
+  2 fma synaptic  120 steps | spikes+gf = (gf 0) | refr = | groups = | rates = | max|Δv| 7.15e-07 (n69919 @step 55) | FAIL
+first divergence at step 2 (simMs 2/2)
+  max |Δv| 2.98023e-08 at n339 (role other): ref 0.311376184 gpu 0.311376154 — ≈ 0 fixed-point units: weight quantization / accumulation
+  3 fma leak+syn  120 steps | spikes+gf = (gf 0) | refr = | groups = | rates = | max|Δv| 0 | ok
+reference arithmetic: 1 fma leak (max |Δv| 0.0)
+A rest  300 steps | spikes+gf = (gf 0) | refr = | groups = | rates = | max|Δv| 0 | ok
+B loom+puff  300 steps | spikes+gf = (gf 122) | refr = | groups = | rates = | max|Δv| 0 | ok
+C stim 200x0.5/7ms   16 steps | spikes+gf = (gf 0) | refr = | groups = | rates = | max|Δv| 0 | ok
+D scale .84 gate .6  150 steps | spikes+gf = (gf 12) | refr = | groups = | rates = | max|Δv| 0 | ok
+E 2 overlapping stims   20 steps | spikes+gf = (gf 0) | refr = | groups = | rates = | max|Δv| 5.96e-08 (n155 @step 1) | ok
+totals: ref 179688 spikes, gpu 179688 spikes over 786 steps
+E' same, GPU summing   20 steps | spikes+gf = (gf 0) | refr = | groups = | rates = | max|Δv| 0 | ok
+batch invariance 96 steps: 96x1 vs 6x16 -> bit-identical; 96x1 vs 50+46 -> bit-identical
+stim invariance (0.5/7 ms on 200 neurons): 16x1 vs 1x16 -> bit-identical
+delay probe (inhibitory pre n91297): durationMs 1 -> 0 stimulated steps (spiked false, states still identical true)
+  forced one spike after 2 attempt(s) | 0 excitatory / 9783 inhibitory targets
+  excitatory targets, first Δv at step offset: []
+  inhibitory targets, first Δv at step offset: [(offset: 0, targets: 11), (offset: 4, targets: 9771), (offset: 6, targets: 1)]
+  t+1: 0 checked (0 spiked/clamped), max |Δv - w*decay| = 0;  t+4: 9768 checked (3 spiked/clamped), max |Δv - w| = 0
+delay probe (excitatory pre n86289): durationMs 1 -> 0 stimulated steps (spiked false, states still identical true)
+  forced one spike after 5 attempt(s) | 8454 excitatory / 0 inhibitory targets
+  excitatory targets, first Δv at step offset: [(offset: 0, targets: 9), (offset: 1, targets: 8436), (offset: 2, targets: 1), (offset: 5, targets: 8)]
+  inhibitory targets, first Δv at step offset: []
+  t+1: 8431 checked (5 spiked/clamped), max |Δv - w*decay| = 1.48e-07;  t+4: 0 checked (0 spiked/clamped), max |Δv - w| = 0
+gait probe (gaitDrive 0.5, 8 Hz, 200 steps, 24 ascend neurons):
+  gaitFma 0  200 steps | spikes+gf = (gf 0) | refr = | groups = | rates = | max|Δv| 1.19e-07 (n103594 @step 47) | ok
+    ascend-only |Δv|: step 1 7.45e-09, worst over 200 steps 1.19e-07
+  gaitFma 1  200 steps | spikes+gf = (gf 0) | refr = | groups = | rates = | max|Δv| 1.19e-07 (n103594 @step 47) | ok
+    ascend-only |Δv|: step 1 7.45e-09, worst over 200 steps 1.19e-07
+  gaitFma 2  200 steps | spikes+gf = (gf 0) | refr = | groups = | rates = | max|Δv| 5.96e-08 (n113373 @step 21) | ok
+    ascend-only |Δv|: step 1 7.45e-09, worst over 200 steps 5.96e-08
+  gaitFma 3  200 steps | spikes+gf = (gf 0) | refr = | groups = | rates = | max|Δv| 5.96e-08 (n113373 @step 21) | ok
+    ascend-only |Δv|: step 1 7.45e-09, worst over 200 steps 5.96e-08
+gait: best ascend-only step-1 |Δv| = 7.450581e-09 with gaitFma 0
+H 12.2 s + burst  538 steps | spikes+gf = (gf 0) | refr = | groups = | rates = | max|Δv| 0 | ok
+  12200 simulated ms, 538 comparison points; population rate 1.71 -> 5.52 Hz across the burst; reference burst window [12000, 12400), next at 29150
+gpucheck ran in 11.8 s
+GPUCHECK PASS
+### exit=0 wall=11s
+
+###################################################################
+### ./DesktopFly --behaviortest
+###################################################################
+metal-sim: Apple M4 Pro N=139255 E=15091983 load 40 ms compile 1 ms
+PASS  GF stim -> escape flight: state=flying
+PASS  DNg11 stim -> grooming: state=grooming
+PASS  DNp09 stim -> walks, speed rises (capped): state=walking speed=41
+PASS  MDN stim (from idle) -> backward walk: backwardTimer=0.50
+PASS  DNa-left stim -> left (CCW) turn while walking: heading change +0.27 rad
+PASS  moderate loom -> fear response (dart or escape): state=flying speed=0
+PASS  tap near fly -> startle escape via sensory pathway: state=flying
+FAIL  ledge attach + follow window edge: state=walking y=-69 ledge=false
+PASS  window closes underfoot -> takeoff: took off
+PASS  sleep signal -> sleeping; wake -> grooming: woke to grooming
+PASS  thermal tempo scales walking speed: cool 46 -> hot 70 pt/s
+PASS  flight: altitude drives scale; escape flies higher than casual: escape alt 0.83 scale 1.91 | casual alt 0.41 scale 1.52
+PASS  flight: wings actually beat: wing sweep 0.35 rad over 0.5 s
+PASS  escape-DN activity mid-flight raises wing-beat effort: effort 0.50 -> 1.02
+PASS  threat while grounded raises the wings (no takeoff): raise 1.00, wing tilt -0.50 rad
+PASS  landing is smooth: no scale/height snap at touchdown: landed=yes, max per-frame Δscale 0.04, Δz 4.4
+PASS  circadian curve: siesta + night dips, dawn/dusk peaks: 3h 0.25, 9h 1.00, 14h 0.55, 18h 1.00
+1 FAILURES
+### exit=1 wall=1s
+
+###################################################################
+### ./DesktopFly --behaviortest x3 (re-runs: the run above hit the
+### pre-existing ~1-in-8 'ledge attach' flake, a bodyCheck with no sim
+### in it — see notes/03-metal-sim.md and notes/07-brainview.md)
+###################################################################
+--- run 1 ---
+ALL BEHAVIOR TESTS PASS
+    exit=0
+--- run 2 ---
+ALL BEHAVIOR TESTS PASS
+    exit=0
+--- run 3 ---
+ALL BEHAVIOR TESTS PASS
+    exit=0
+
+###################################################################
+### /opt/anaconda3/bin/python3 tools/verify_data.py data --no-parquet
+### (structure-only: the raw parquet is not on disk in this session)
+###################################################################
+manifest: desktopfly-connectome-1 generated 2026-08-19T01:56:42Z  args ['cache/flywire783']
+N = 139255  E = 15091983  Σ synapses = 54492922  min_syn = 1
+
+files:
+  neurons.bin      4,177,712 B  sha256 c48bd4a0ab61dc912b82832720d456854b11b6b12f872b25c769b4e11fe48e6a
+  PASS  neurons.bin size
+  PASS  neurons.bin sha256
+  PASS  neurons.bin under the 95 MB cap
+  synapses.bin    90,551,902 B  sha256 8989e0b9b231654046c5726c92f5c825df1b0002aca4ed84b18dcaa76ed8c14b
+  PASS  synapses.bin size
+  PASS  synapses.bin sha256
+  PASS  synapses.bin under the 95 MB cap
+
+arrays:
+  pos         float32  x417765     @         0 in neurons.bin
+  PASS  pos fits in neurons.bin
+  PASS  pos 16-byte aligned
+  superClass  uint8    x139255     @   1671072 in neurons.bin
+  PASS  superClass fits in neurons.bin
+  PASS  superClass 16-byte aligned
+  side        uint8    x139255     @   1810336 in neurons.bin
+  PASS  side fits in neurons.bin
+  PASS  side 16-byte aligned
+  nt          uint8    x139255     @   1949600 in neurons.bin
+  PASS  nt fits in neurons.bin
+  PASS  nt 16-byte aligned
+  role        uint8    x139255     @   2088864 in neurons.bin
+  PASS  role fits in neurons.bin
+  PASS  role 16-byte aligned
+  cellType    uint16   x139255     @   2228128 in neurons.bin
+  PASS  cellType fits in neurons.bin
+  PASS  cellType 16-byte aligned
+  rootId      uint64   x139255     @   2506640 in neurons.bin
+  PASS  rootId fits in neurons.bin
+  PASS  rootId 16-byte aligned
+  rowStart    uint32   x139256     @   3620688 in neurons.bin
+  PASS  rowStart fits in neurons.bin
+  PASS  rowStart 16-byte aligned
+  colIdx      uint32   x15091983   @         0 in synapses.bin
+  PASS  colIdx fits in synapses.bin
+  PASS  colIdx 16-byte aligned
+  weight      int16    x15091983   @  60367936 in synapses.bin
+  PASS  weight fits in synapses.bin
+  PASS  weight 16-byte aligned
+  PASS  pos count == 417765
+  PASS  superClass count == 139255
+  PASS  side count == 139255
+  PASS  nt count == 139255
+  PASS  role count == 139255
+  PASS  cellType count == 139255
+  PASS  rootId count == 139255
+  PASS  rowStart count == 139256
+  PASS  colIdx count == 15091983
+  PASS  weight count == 15091983
+
+CSR:
+  PASS  rowStart[0] == 0
+  PASS  rowStart[N] == E
+  PASS  rowStart monotone non-decreasing
+  PASS  all colIdx < N
+  PASS  no zero weights
+  PASS  |weight| within int16
+  PASS  colIdx strictly ascending within each row
+
+metadata:
+  PASS  pos finite
+  PASS  pos inside [-10,10]
+  PASS  superClass in table
+  PASS  side in table
+  PASS  nt in table
+  PASS  role in table
+  PASS  cellType in table
+  PASS  rootId strictly ascending
+  PASS  role counts match manifest
+  roles: lc4=104, lplc2=210, gf=2, dna01=2, dna02=2, dnp09=2, dng11=6, mdn=4, escw=6, ascend=24, sens=16
+  PASS  every known-nt weight sign matches its PRE neuron's nt sign
+  PASS  one sign per PRE neuron (Dale's law)
+  PASS  AL local interneurons (^(lLN|il3LN|v2LN), no nt_type) have only non-positive weights
+  PASS  signFallback.alPriorNeurons matches the data
+  PASS  signFallback.alPriorSynapses matches the data
+  PASS  sign fallback took effect (UNKNOWN-nt neurons with negative weights)
+  PASS  signFallback.neurons matches the data
+  PASS  signFallback.inhibitory matches the data
+  PASS  signFallback.noSource matches the data
+  PASS  signFallback.inhibitorySynapses matches the data
+  fallback: 94 AL local interneurons forced inhibitory, 18314 signed from the parquet (5700 inhibitory)
+  PASS  Σ|weight| matches manifest
+
+parquet spot-checks: SKIPPED (--no-parquet)
+
+N = 139255  E = 15091983  Σ|w| = 54492922  out-degree mean 108.38 max 9783
+
+ALL CHECKS PASSED
+### exit=0
