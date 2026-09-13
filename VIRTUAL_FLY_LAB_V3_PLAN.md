@@ -3,7 +3,7 @@
 상태: **IMPLEMENTATION COMPLETE / USER VALIDATION PENDING** · 완료: 2026-09-13
 기준 커밋: `447f7e234f91ec44da4e2e68ada50a00859f4375`
 
-현재 진행: A–E 구현과 자동/real-headless 회귀는 완료했다. 실제 viewer+GUI 시작/연결 smoke도 완료했다. 기록 중 정상 메뉴 Quit의 마지막 수동 GUI 검증은 사용자가 별도로 수행하기로 했으므로 구현 완료와 외부 검증을 분리한다. 정확한 결과와 한계는 `V3_COMPLETION_REPORT.md`에 기록한다.
+현재 진행: A–E 구현과 자동/real-headless 회귀는 완료했다. 커밋 `31bd106`에 대한 독립 검증에서 발견된 recorder 실패 시 Quit 승인(P1)과 10× 늦은 source expiry 허용(P2)도 후속 수정 및 fault-injection 재검증을 완료했다. 실제 viewer+GUI 시작/연결 smoke도 완료했다. 기록 중 정상 메뉴 Quit의 마지막 물리적 메뉴 조작은 사용자가 별도로 검증하기로 했으므로 구현 완료와 외부 검증을 분리한다. 정확한 결과와 한계는 `V3_COMPLETION_REPORT.md`와 `V3_VERIFICATION_REPORT_2026-09-13.md`에 기록한다.
 
 ## 1. 이번 버전의 목표
 
@@ -93,8 +93,8 @@ A–D가 통과한 뒤에만 진행한다. 대상은 `main.swift`의 modeled sen
 [장기 로드맵 §12](VIRTUAL_FLY_LAB_ROADMAP.md#12-검증-매트릭스와-성능)의 기존 회귀 전체를 실행한다. GPU와 timing-sensitive 검사는 부하를 겹치지 않게 순차 실행한다.
 
 - [x] A: `--gpucheck` C/H 포함 전체 exit 0, 비교의 독립성 유지.
-- [x] B: mock/real TCP loop 정상 만료 확인, 느린 simulation에서도 false failure 없음, timer 정지 음성 대조 실패.
-- [x] C: 저장 완료 이후에만 saved, recorder quit-drain tail 유지, failure가 UI completion으로 전달됨. 실제 메뉴 조작 E2E는 사용자 수동 검증으로 분리.
+- [x] B: mock/real TCP loop 정상 만료 확인, 느린 wall-time simulation 허용, bounded simulation-time window 적용. timer 정지·10× 지연·0.1× 조기 종료 음성 대조는 모두 실패 탐지.
+- [x] C: 저장 완료 이후에만 saved, recorder quit-drain tail 유지. 저장 실패 시 자동 Quit을 취소하고 오류/경로를 유지하며 `Quit Anyway`의 명시적 선택만 종료를 허용. 성공/실패 reply 정책 회귀 통과. 실제 메뉴 조작 E2E는 사용자 수동 검증으로 분리.
 - [x] D: clean checkout 실행 경로 및 fresh venv setup 검증, 실제 GUI/real viewer 시작·연결 smoke, 검증 문서 갱신. 정상 메뉴 조작은 사용자 수동 검증으로 분리.
 - [x] E: `SensoryModel.swift` / `MotorReadout.swift` 최소 추출, V2 formula parity + same-seed downstream neural parity, 기존 회귀 전체 통과.
 - [x] 사용 데이터와 gain/shader 의미에 의도하지 않은 변경 없음.

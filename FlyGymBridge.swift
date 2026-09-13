@@ -1269,27 +1269,48 @@ func runLabLoopTest() {
 
     // The backend timer is expressed in MuJoCo simulation time, not wall time.
     // A slow real backend may need much more than 300 ms of wall time to advance
-    // 300 ms of simulation. Wait for the body clock to cross the requested
-    // duration and use wall time only as a hang guard. If the simulation clock
-    // advances but the source does not clear, the timer path is genuinely broken.
+    // 300 ms of simulation. Accept only a bounded simulation-time expiry window:
+    // too-early clear, frozen timers and excessively late clear are all failures.
+    // The tolerance covers one observed body packet plus a few physics/telemetry
+    // steps; wall time remains only a hang guard.
     let sourceSimTime = sourceBody?.simTime ?? fg.latestBody()?.simTime ?? 0
-    let expiryTargetSimTime = sourceSimTime + 0.32
+    let requestedDurationS = 0.300
+    let sourceDt = max(0.001, sourceBody?.simDt ?? fg.latestBody()?.simDt ?? 0.001)
+    let expiryToleranceS = max(0.060, min(0.120, sourceDt * 4 + 0.020))
+    let expiryTargetSimTime = sourceSimTime + requestedDurationS
+    let expiryEarliestSimTime = expiryTargetSimTime - expiryToleranceS
+    let expiryLatestSimTime = expiryTargetSimTime + expiryToleranceS
     let expiryWallDeadline = Date().addingTimeInterval(12.0)
     var expired: FlyGymBodyFeedback?
-    var crossedExpiryTime = false
+    var expiredTooEarly = false
+    var expiredTooLate = false
+    var expiredInWindow = false
     while Date() < expiryWallDeadline {
         if let body = fg.latestBody() {
             expired = body
-            if body.simTime >= expiryTargetSimTime {
-                crossedExpiryTime = true
-                if body.windStrength == 0 && body.touchStrength == 0 { break }
+            let cleared = body.windStrength == 0 && body.touchStrength == 0
+            if cleared {
+                if body.simTime < expiryEarliestSimTime {
+                    expiredTooEarly = true
+                } else if body.simTime <= expiryLatestSimTime {
+                    expiredInWindow = true
+                } else {
+                    expiredTooLate = true
+                }
+                break
+            }
+            if body.simTime > expiryLatestSimTime {
+                expiredTooLate = true
+                break
             }
         }
         Thread.sleep(forTimeInterval: 0.01)
     }
-    let expiredOK = crossedExpiryTime && expired?.windStrength == 0 && expired?.touchStrength == 0
+    let expiredOK = expiredInWindow && !expiredTooEarly && !expiredTooLate
     print("\(expiredOK ? "PASS" : "FAIL")  labloop body source clears on simulation-time timer expiry"
-          + " target_t=\(String(format: "%.4f", expiryTargetSimTime))s — \(bodyDiagnostic(expired))")
+          + " target_t=\(String(format: "%.4f", expiryTargetSimTime))s"
+          + " window=[\(String(format: "%.4f", expiryEarliestSimTime)),\(String(format: "%.4f", expiryLatestSimTime))]s"
+          + " — \(bodyDiagnostic(expired))")
     if !expiredOK { failures += 1 }
     if let event = fg.latestLabEvent() {
         print("PASS  labloop event \(event.event)")

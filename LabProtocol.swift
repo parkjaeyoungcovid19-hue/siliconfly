@@ -790,6 +790,34 @@ func runLabTest() {
               failureCompleted && failed && failingRecorder.state == .failed
               && failingRecorder.lastErrorMessage != nil,
               failingRecorder.lastErrorMessage ?? "no error")
+        if let failureOutcome {
+            let policy = applicationQuitAfterRecorderDrain(failureOutcome)
+            let requiresConfirmation: Bool
+            if case .requireFailureConfirmation = policy { requiresConfirmation = true }
+            else { requiresConfirmation = false }
+            check("AppKit quit policy blocks automatic termination after save failure",
+                  !failureOutcome.succeeded && requiresConfirmation)
+
+            var keepOpenReply: Bool?
+            resolveApplicationQuitAfterRecorderDrain(
+                failureOutcome,
+                confirmFailure: { _, _, decision in decision(false) },
+                reply: { keepOpenReply = $0 }
+            )
+            var explicitQuitReply: Bool?
+            resolveApplicationQuitAfterRecorderDrain(
+                failureOutcome,
+                confirmFailure: { _, _, decision in decision(true) },
+                reply: { explicitQuitReply = $0 }
+            )
+            check("AppKit quit failure requires explicit user override",
+                  keepOpenReply == false && explicitQuitReply == true)
+        } else {
+            check("AppKit quit policy blocks automatic termination after save failure", false,
+                  "missing failure outcome")
+            check("AppKit quit failure requires explicit user override", false,
+                  "missing failure outcome")
+        }
     } else {
         check("forced-failure recorder starts before injected write", false)
     }
@@ -810,6 +838,18 @@ func runLabTest() {
         check("application-quit recorder drain keeps tail",
               quitCompleted && quitRecorder.state == .saved && quitTelemetry.contains(",9001,")
               && quitEvents.contains("application quit"))
+        let savedOutcome = ExperimentRecorderStopOutcome.saved(path: quitPath)
+        check("AppKit quit policy terminates only after successful recorder drain",
+              applicationQuitAfterRecorderDrain(savedOutcome) == .terminate)
+        var savedReply: Bool?
+        var unexpectedPrompt = false
+        resolveApplicationQuitAfterRecorderDrain(
+            savedOutcome,
+            confirmFailure: { _, _, _ in unexpectedPrompt = true },
+            reply: { savedReply = $0 }
+        )
+        check("AppKit quit success replies terminate without failure prompt",
+              savedReply == true && !unexpectedPrompt)
     } else {
         check("application-quit recorder starts", false)
     }

@@ -1039,6 +1039,33 @@ final class Coordinator: NSObject, SCNSceneRendererDelegate {
 
 // MARK: - App
 
+enum ApplicationQuitAfterRecorderDrain: Equatable {
+    case terminate
+    case requireFailureConfirmation(path: String?, message: String)
+}
+
+func applicationQuitAfterRecorderDrain(_ outcome: ExperimentRecorderStopOutcome) -> ApplicationQuitAfterRecorderDrain {
+    switch outcome {
+    case .saved, .notRecording:
+        return .terminate
+    case .failed(let path, let message):
+        return .requireFailureConfirmation(path: path, message: message)
+    }
+}
+
+func resolveApplicationQuitAfterRecorderDrain(
+    _ outcome: ExperimentRecorderStopOutcome,
+    confirmFailure: @escaping (String?, String, @escaping (Bool) -> Void) -> Void,
+    reply: @escaping (Bool) -> Void
+) {
+    switch applicationQuitAfterRecorderDrain(outcome) {
+    case .terminate:
+        reply(true)
+    case .requireFailureConfirmation(let path, let message):
+        confirmFailure(path, message, reply)
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         if let fg = flyGymBridge { flyGymItem?.title = "FlyGym: " + fg.statusLine }
@@ -1230,16 +1257,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         terminationPending = true
         labWC.prepareForApplicationTermination { outcome in
-            switch outcome {
-            case .saved(let path):
+            if case .saved(let path) = outcome {
                 fputs("lab recorder: quit drain saved \(path)\n", stderr)
-            case .failed(let path, let message):
+            } else if case .failed(let path, let message) = outcome {
                 fputs("lab recorder: quit drain failed \(message) \(path ?? "")\n", stderr)
-            case .notRecording:
-                break
             }
-            self.terminationPending = false
-            sender.reply(toApplicationShouldTerminate: true)
+            resolveApplicationQuitAfterRecorderDrain(
+                outcome,
+                confirmFailure: { path, message, decision in
+                    labWC.presentTerminationSaveFailure(path: path, message: message, completion: decision)
+                },
+                reply: { allowTermination in
+                    self.terminationPending = false
+                    sender.reply(toApplicationShouldTerminate: allowTermination)
+                }
+            )
         }
         return .terminateLater
     }

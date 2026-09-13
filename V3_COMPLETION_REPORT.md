@@ -4,6 +4,7 @@ Date: **2026-09-13**
 Implementation status: **COMPLETE**
 External/manual user validation: **PENDING BY USER**
 Baseline Git commit: `447f7e234f91ec44da4e2e68ada50a00859f4375`
+V3 implementation commit: `31bd106` (`Complete Virtual Fly Lab V3 stabilization`)
 
 ## Scope completed
 
@@ -25,6 +26,8 @@ V3 followed `VIRTUAL_FLY_LAB_V3_PLAN.md` and intentionally stayed inside the sta
 - The test cleans up only the object it created instead of resetting a pre-existing user's world/body.
 - Mock and real FlyGym-headless TCP loops both pass.
 - Python `test_lab.py` contains a negative control proving wall-clock delay alone does not advance the simulation-time wind timer.
+- Independent post-commit fault injection found that the first V3 test accepted a 10×-late expiry. The follow-up test now uses a bounded simulation-time acceptance window derived from the observed body timestep and rejects early clear, frozen timers and excessive late clear while still allowing slow wall-time execution.
+- Follow-up fault injection results: normal mock/real-headless pass; frozen timer, 10× duration and 0.1× duration all make `--labloop` exit nonzero as intended.
 
 ### C — recorder completion and application termination
 
@@ -35,6 +38,8 @@ V3 followed `VIRTUAL_FLY_LAB_V3_PLAN.md` and intentionally stayed inside the sta
 - `LabWindow` displays stopping and updates to saved/failed only from the completion result.
 - AppKit termination uses `applicationShouldTerminate` / `.terminateLater` so an active recording drains before termination is approved.
 - Regression tests cover queued tail preservation, stop/start ordering, injected write failure and the quit-drain path.
+- A failed recorder drain no longer automatically approves termination. The Lab window is brought forward with the exact error/path and defaults to **Keep App Open**; termination proceeds after failure only if the user explicitly chooses **Quit Anyway**.
+- The same reply policy used by `AppDelegate` is exercised by `--labtest`: save success replies terminate without a prompt, while save failure requires an explicit override before a `true` termination reply can be produced.
 
 The recorder metadata format string remains V2-compatible intentionally because V3 did not redefine the telemetry CSV schema.
 
@@ -76,6 +81,9 @@ All commands below returned exit code **0** in the final V3 working tree unless 
 ./flygym-venv/bin/python flygym_bridge/test_vision_real.py
 ./ThongpariFlyNeuronSim --labloop   # with bridge.py --mock
 ./ThongpariFlyNeuronSim --labloop   # with bridge.py --flygym-headless
+fault injection: frozen simulation timer -> --labloop must fail
+fault injection: 10x requested source duration -> --labloop must fail
+fault injection: 0.1x requested source duration -> --labloop must fail
 git diff --check
 ```
 
@@ -103,7 +111,7 @@ The measured throughput figures above are observations from this machine, not po
 
 ## Known limitation / user validation handoff
 
-The real viewer + Lab GUI was launched as a fresh process and bridge connectivity/performance was observed. The assistant-side smoke was stopped from the validation terminal rather than by physically clicking the GUI's normal Quit menu while a recording was active. The underlying termination/recorder path is covered by automated regression, but **the user explicitly chose to perform final GUI validation separately**. This report therefore does not claim that manual menu interaction was exercised by the assistant.
+The real viewer + Lab GUI was launched as a fresh process and bridge connectivity/performance was observed. The assistant-side smoke was stopped from the validation terminal rather than by physically clicking the GUI's normal Quit menu while a recording was active. The success/failure termination reply policy and recorder drain are covered by automated regression, including failure cancellation/explicit override, but **the user explicitly chose to perform final GUI validation separately**. This report therefore does not claim that the final physical menu interaction was exercised by the assistant.
 
 Recommended manual validation focus:
 
@@ -137,7 +145,7 @@ Pre-existing/uncommitted audit and validation files in the working tree were pre
 
 ## Rollback
 
-No V3 commit was created automatically. Because the working tree already contained user/pre-existing changes before V3 work began, **do not use a blanket `git reset --hard` or broad `git restore .` as a rollback method**. The safest rollback after review is to commit the V3 change as one isolated commit and later use `git revert <that-commit>` if necessary. Before any rollback, preserve the existing uncommitted audit/roadmap/validation files.
+The main V3 implementation is committed as `31bd106`. The independent verification report and its follow-up fixes were created after that commit and remain separate until explicitly committed. Because the working tree also contains user/pre-existing untracked audit/validation material, **do not use a blanket `git reset --hard` or broad `git clean`/`git restore .` as a rollback method**. To roll back the committed V3 implementation, preserve untracked audit/validation files first and use `git revert 31bd106`; if the verification fixes are committed separately, revert that follow-up commit separately as well.
 
 ## Next version boundary
 

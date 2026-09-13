@@ -851,6 +851,32 @@ final class LabWindowController: NSWindowController, NSWindowDelegate {
             }
         }
     }
+
+    /// A failed recorder drain must not disappear with the app. Keep the Lab
+    /// window alive, show the exact failure/path, and require an explicit choice
+    /// before AppDelegate replies to AppKit's pending termination request.
+    func presentTerminationSaveFailure(path: String?, message: String,
+                                       completion: @escaping (Bool) -> Void) {
+        let whereText = path.map { "\n\nPartial recording files remain at:\n\($0)" } ?? ""
+        recorderLabel.stringValue = "save failed: \(message)\(path.map { " — \($0)" } ?? "")"
+        show()
+
+        let alert = NSAlert()
+        alert.alertStyle = .critical
+        alert.messageText = "Recording could not be saved completely"
+        alert.informativeText = "The app will stay open by default so you can inspect the recording and retry a new recording if needed. Already-lost queued data cannot be reconstructed automatically.\n\nError: \(message)\(whereText)"
+        alert.addButton(withTitle: "Keep App Open")
+        alert.addButton(withTitle: "Quit Anyway")
+
+        let finish: (NSApplication.ModalResponse) -> Void = { response in
+            completion(response == .alertSecondButtonReturn)
+        }
+        if let window {
+            alert.beginSheetModal(for: window, completionHandler: finish)
+        } else {
+            finish(alert.runModal())
+        }
+    }
     @objc private func markBaseline() { recorder.mark(kind: "marker", detail: "baseline") }
     @objc private func markStimulusOn() { recorder.mark(kind: "marker", detail: "stimulus_on") }
     @objc private func markStimulusOff() { recorder.mark(kind: "marker", detail: "stimulus_off") }
