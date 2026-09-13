@@ -356,17 +356,110 @@ func runLabTest() {
     backendStim.windSensory = true
     backendStim.touchStrength = 0.55
     backendStim.touchSensory = true
-    let activeBackend = labBackendSensoryState(backendStim)
+    let activeBackend = SensoryModel.backendState(backendStim)
     backendStim.windSensory = false
     backendStim.touchSensory = false
-    let disabledBackend = labBackendSensoryState(backendStim)
-    let missingBackend = labBackendSensoryState(nil)
+    let disabledBackend = SensoryModel.backendState(backendStim)
+    let missingBackend = SensoryModel.backendState(nil)
     check("backend body state is authoritative for wind/touch neural source",
           abs(activeBackend.wind - 0.7) < 1e-6
           && abs(activeBackend.windDirectionDeg + 30) < 1e-9
           && abs(activeBackend.touchDrive - 0.119) < 1e-6
           && disabledBackend.wind == 0 && disabledBackend.touchDrive == 0
           && missingBackend.wind == 0 && missingBackend.touchDrive == 0)
+
+    // V3 module extraction parity. These local equations are the frozen V2
+    // pre-extraction formulas, not calls back into SensoryModel. Any future
+    // model change must therefore be deliberate rather than hidden in a refactor.
+    func legacyOdor(_ x: Float, _ gate: Float) -> Float {
+        let bounded = min(1, max(0, x))
+        return 0.060 * sqrt(sqrt(bounded)) * gate
+    }
+    func legacyThermal(_ celsius: Double, _ enabled: Bool, _ gate: Float) -> (Float, Float) {
+        guard enabled else { return (0, 0) }
+        let warm = Float(max(0, min(1, (celsius - 25) / 10)))
+        let cool = Float(max(0, min(1, (25 - celsius) / 10)))
+        return (warm * 0.060 * gate, cool * 0.060 * gate)
+    }
+    func legacyWind(_ strength: Float, _ direction: Double, _ heading: Double,
+                    _ gate: Float) -> (Float, Float) {
+        guard strength > 0 else { return (0, 0) }
+        let opponent = Float(cos(direction * .pi / 180 - heading))
+        return (strength * (0.5 + 0.5 * opponent) * 0.055 * gate,
+                strength * (0.5 - 0.5 * opponent) * 0.055 * gate)
+    }
+    var sensoryParity = true
+    for gate: Float in [0.0, 0.55, 1.0] {
+        for x: Float in [-0.2, 0, 0.0732, 0.5, 1, 1.4] {
+            sensoryParity = sensoryParity
+                && SensoryModel.odorCurrent(x, sensoryGate: gate) == legacyOdor(x, gate)
+        }
+        for temp in [10.0, 20.0, 25.0, 32.0, 40.0] {
+            for enabled in [false, true] {
+                let got = SensoryModel.thermal(celsius: temp, enabled: enabled, sensoryGate: gate)
+                let old = legacyThermal(temp, enabled, gate)
+                sensoryParity = sensoryParity && got.warm == old.0 && got.cool == old.1
+            }
+        }
+        for (strength, direction, heading): (Float, Double, Double) in [
+            (0, 0, 0), (0.2, 90, 0), (0.7, -30, 0.3), (1, 360, -.pi / 2)
+        ] {
+            let got = SensoryModel.wind(strength: strength, directionDeg: direction,
+                                        bodyHeading: heading, sensoryGate: gate)
+            let old = legacyWind(strength, direction, heading, gate)
+            sensoryParity = sensoryParity && got.c == old.0 && got.e == old.1
+        }
+        for source: Float in [0, 0.02, 0.119, 0.2] {
+            sensoryParity = sensoryParity
+                && SensoryModel.touch(sourceDrive: source, sensoryGate: gate) == source * gate
+        }
+    }
+    let tempoParity = [10.0, 20.0, 25.0, 32.0, 40.0].allSatisfy { temp in
+        let old = clampf(CGFloat(1 + (min(40, max(10, temp)) - 25) * 0.03), 0.55, 1.45)
+        return SensoryModel.locomotorTempo(celsius: temp) == old
+    }
+    check("V3 SensoryModel preserves V2 source→drive equations", sensoryParity && tempoParity)
+
+    // SignalBuilder was also moved out of main.swift. Compare its stateful DNa
+    // adaptation and all command channels against the exact frozen V2 equations.
+    let motorBuilder = SignalBuilder()
+    var legacyDNaBaseline: Float = 0
+    var motorParity = true
+    let motorInputs = [
+        MotorReadoutInput(giantFiberSpiked: false, rateLoom: 0, rateDNaL: 45, rateDNaR: 38,
+                          rateMDN: 20, rateFwd: 8, rateGroom: 1, rateEscW: 0, ratePop: 1.8),
+        MotorReadoutInput(giantFiberSpiked: true, rateLoom: 80, rateDNaL: 70, rateDNaR: 20,
+                          rateMDN: 90, rateFwd: 43, rateGroom: 12, rateEscW: 15, ratePop: 7),
+        MotorReadoutInput(giantFiberSpiked: false, rateLoom: 12, rateDNaL: 25, rateDNaR: 60,
+                          rateMDN: 59.9, rateFwd: 20, rateGroom: 3, rateEscW: 4, ratePop: 3),
+    ]
+    let motorDt: CGFloat = 1.0 / 60.0
+    for input in motorInputs {
+        let diff = input.rateDNaL - input.rateDNaR
+        legacyDNaBaseline += (diff - legacyDNaBaseline) * Float(min(1, motorDt / 8))
+        var old = BrainSignals()
+        old.escape = input.giantFiberSpiked
+        old.nervous = clampf(CGFloat(input.rateLoom) / 115, 0, 1)
+        old.turnBias = clampf(CGFloat(diff - legacyDNaBaseline) * 0.04, -1, 1)
+        old.backward = input.rateMDN > 60
+        old.walkDrive = clampf((CGFloat(input.rateFwd) - 10) / 33, 0, 1.3)
+        old.groomDrive = clampf(CGFloat(input.rateGroom) / 5, 0, 1.5)
+        old.wingDrive = clampf(CGFloat(input.rateEscW) / 10, 0, 1.3)
+        old.arousal = clampf(CGFloat(input.ratePop) / 10, 0, 1)
+        let got = motorBuilder.make(input, dt: motorDt)
+        motorParity = motorParity
+            && got.escape == old.escape && got.nervous == old.nervous
+            && got.turnBias == old.turnBias && got.backward == old.backward
+            && got.walkDrive == old.walkDrive && got.groomDrive == old.groomDrive
+            && got.wingDrive == old.wingDrive && got.arousal == old.arousal
+    }
+    motorBuilder.reset(); legacyDNaBaseline = 0
+    let resetInput = motorInputs[1]
+    let resetDiff = resetInput.rateDNaL - resetInput.rateDNaR
+    legacyDNaBaseline += (resetDiff - legacyDNaBaseline) * Float(min(1, motorDt / 8))
+    let resetExpectedTurn = clampf(CGFloat(resetDiff - legacyDNaBaseline) * 0.04, -1, 1)
+    motorParity = motorParity && motorBuilder.make(resetInput, dt: motorDt).turnBias == resetExpectedTurn
+    check("V3 MotorReadout preserves V2 rate→command sequence/reset", motorParity)
 
     var decodedSignals = BrainSignals()
     decodedSignals.walkDrive = 0.42
@@ -542,13 +635,66 @@ func runLabTest() {
                      receptorTelemetry.rateWindE))
         sim.reset(seed: SIM_SEED)
         check("unknown neural role rejected", labPopulationIndices(sim, role: "invented").isEmpty)
+
+        // Same-seed downstream parity: feed one sim through the extracted model
+        // and another through the frozen V2 equations, then require identical
+        // neural state/spikes. This catches an arithmetic-order change that a
+        // source-only comparison could otherwise miss.
+        if let legacySim = MetalSim(connectome: c, spikeBus: nil, seed: SIM_SEED) {
+            legacySim.perfLogIntervalMs = 0
+            sim.reset(seed: SIM_SEED); legacySim.reset(seed: SIM_SEED)
+            let sequence: [(Float, Double, Bool, Float, Double, Double, Float)] = [
+                (0.0732, 32, true, 0.7, 90, 0.2, 0.55),
+                (0.4, 20, true, 0.2, -30, -0.4, 1.0),
+                (0.0, 25, false, 0.0, 0, 0, 1.0),
+            ]
+            var neuralParity = true
+            var neuralParityDetail = ""
+            for (odor, temp, thermoOn, wind, windDeg, heading, gate) in sequence {
+                let newThermal = SensoryModel.thermal(celsius: temp, enabled: thermoOn, sensoryGate: gate)
+                let oldThermal = legacyThermal(temp, thermoOn, gate)
+                let newWind = SensoryModel.wind(strength: wind, directionDeg: windDeg,
+                                                bodyHeading: heading, sensoryGate: gate)
+                let oldWind = legacyWind(wind, windDeg, heading, gate)
+                let newOdor = SensoryModel.odorCurrent(odor, sensoryGate: gate)
+                let oldOdor = legacyOdor(odor, gate)
+                sim.setModeledSensoryDrive(.foodOdorLeft, indices: sim.foodOdorLeft, strength: newOdor)
+                sim.setModeledSensoryDrive(.thermoWarm, indices: sim.thermoWarm, strength: newThermal.warm)
+                sim.setModeledSensoryDrive(.thermoCool, indices: sim.thermoCool, strength: newThermal.cool)
+                sim.setModeledSensoryDrive(.windC, indices: sim.windC, strength: newWind.c)
+                sim.setModeledSensoryDrive(.windE, indices: sim.windE, strength: newWind.e)
+                legacySim.setModeledSensoryDrive(.foodOdorLeft, indices: legacySim.foodOdorLeft, strength: oldOdor)
+                legacySim.setModeledSensoryDrive(.thermoWarm, indices: legacySim.thermoWarm, strength: oldThermal.0)
+                legacySim.setModeledSensoryDrive(.thermoCool, indices: legacySim.thermoCool, strength: oldThermal.1)
+                legacySim.setModeledSensoryDrive(.windC, indices: legacySim.windC, strength: oldWind.0)
+                legacySim.setModeledSensoryDrive(.windE, indices: legacySim.windE, strength: oldWind.1)
+                sim.step(40); legacySim.step(40)
+                let vA = sim.membrane(), vB = legacySim.membrane()
+                let rA = sim.debugRefr(), rB = legacySim.debugRefr()
+                // GPU atomics do not promise append order; compare the spike set,
+                // exactly as GPUCheck does, while membrane/refractory remain exact.
+                let sA = sim.lastStepSpikes().sorted(), sB = legacySim.lastStepSpikes().sorted()
+                let gA = sim.lastStepGroupCounts(), gB = legacySim.lastStepGroupCounts()
+                let same = vA == vB && rA == rB && sA == sB && gA == gB
+                if !same && neuralParityDetail.isEmpty {
+                    let firstV = zip(vA, vB).enumerated().first { $0.element.0 != $0.element.1 }
+                    neuralParityDetail = "simMs=\(sim.simMs) v=\(firstV?.offset ?? -1) refr=\(rA == rB) spikes=\(sA.count)/\(sB.count) groups=\(gA == gB)"
+                }
+                neuralParity = neuralParity && same
+            }
+            check("V3 extraction preserves same-seed downstream neural state", neuralParity,
+                  neuralParityDetail)
+        } else {
+            check("V3 extraction preserves same-seed downstream neural state", false,
+                  "could not initialize legacy parity sim")
+        }
     } else {
         check("direct-neural role mapping", false, "could not initialize MetalSim")
     }
 
-    // Recording is part of the user-facing lab contract. Exercise the async
-    // writer in a temporary directory so stop() cannot drop the final queued
-    // telemetry/event and no test artifact reaches ~/Documents.
+    // Recording is part of the user-facing lab contract. Exercise the serialized
+    // lifecycle in a temporary directory so queued tail data cannot be reported
+    // as saved before write/flush/close actually finish.
     let fm = FileManager.default
     let recorderRoot = fm.temporaryDirectory
         .appendingPathComponent("siliconfly-recorder-test-\(UUID().uuidString)", isDirectory: true)
@@ -566,24 +712,106 @@ func runLabTest() {
         sample.flyState = "walking"
         recorder.append(sample)
         recorder.mark(kind: "lab_test_marker", detail: "flush")
-        recorder.stop()
+        var tail = sample
+        tail.simMs = 4242
+        recorder.append(tail)
+
+        let stopDone = DispatchSemaphore(value: 0)
+        var stopOutcome: ExperimentRecorderStopOutcome?
+        recorder.stop { outcome in
+            stopOutcome = outcome
+            stopDone.signal()
+        }
+        let completed = stopDone.wait(timeout: .now() + 3) == .success
         recorder.flushForTesting()
 
         let metadata = (try? String(contentsOfFile: recordingPath + "/metadata.json", encoding: .utf8)) ?? ""
         let telemetry = (try? String(contentsOfFile: recordingPath + "/telemetry.csv", encoding: .utf8)) ?? ""
         let events = (try? String(contentsOfFile: recordingPath + "/events.jsonl", encoding: .utf8)) ?? ""
         check("recorder writes V2 metadata", metadata.contains("Thongpari Fly Neuron Sim Virtual Fly Lab V2"))
-        check("recorder flushes V2 telemetry on stop",
+        check("recorder stop completes only after saved state",
+              completed && stopOutcome?.succeeded == true && recorder.state == .saved,
+              "completed=\(completed) state=\(recorder.state.rawValue)")
+        check("recorder flushes queued telemetry tail on stop",
               telemetry.contains("odor_drive_l") && telemetry.contains("nearest_food_mm")
               && telemetry.contains("receptor_odor_l_hz")
               && telemetry.contains("brain_signals_available")
               && telemetry.contains("brain_walk")
-              && telemetry.contains(",42,"))
+              && telemetry.contains(",42,") && telemetry.contains(",4242,"))
         check("recorder preserves start/marker/stop events",
               events.contains("recording_started") && events.contains("lab_test_marker")
               && events.contains("recording_stopped"))
+
+        // A rapid stop→start must never reuse/open a second session while the old
+        // file handles are still in `stopping`. Once completion lands, restarting
+        // is allowed and produces a distinct directory.
+        if let secondPath = recorder.start() {
+            var secondTail = sample
+            secondTail.simMs = 5151
+            recorder.append(secondTail)
+            let rapidDone = DispatchSemaphore(value: 0)
+            recorder.stop { _ in rapidDone.signal() }
+            let immediateRestart = recorder.start()
+            let rapidStopped = rapidDone.wait(timeout: .now() + 3) == .success
+            let restartAfterStop = immediateRestart ?? recorder.start()
+            check("rapid stop→start never overlaps recorder sessions",
+                  rapidStopped && restartAfterStop != nil && restartAfterStop != secondPath,
+                  "immediate=\(immediateRestart ?? "nil") after=\(restartAfterStop ?? "nil")")
+            if recorder.isRecording {
+                let cleanup = DispatchSemaphore(value: 0)
+                recorder.stop { _ in cleanup.signal() }
+                _ = cleanup.wait(timeout: .now() + 3)
+            }
+        } else {
+            check("recorder restarts after saved stop", false)
+        }
     } else {
         check("recorder starts in temporary directory", false)
+    }
+
+    // Deterministic write-failure seam: queued append/final-event errors must
+    // surface as `failed`, never as a false saved result.
+    let failingRoot = recorderRoot.appendingPathComponent("forced-failure", isDirectory: true)
+    let failingRecorder = ExperimentRecorder(baseDirectory: failingRoot, forceWriteFailureForTesting: true)
+    if failingRecorder.start() != nil {
+        var failingSample = LabTelemetry()
+        failingSample.simMs = 7
+        failingRecorder.append(failingSample)
+        let failureDone = DispatchSemaphore(value: 0)
+        var failureOutcome: ExperimentRecorderStopOutcome?
+        failingRecorder.stop { outcome in
+            failureOutcome = outcome
+            failureDone.signal()
+        }
+        let failureCompleted = failureDone.wait(timeout: .now() + 3) == .success
+        let failed: Bool
+        if case .failed = failureOutcome { failed = true } else { failed = false }
+        check("recorder write failure propagates as failed",
+              failureCompleted && failed && failingRecorder.state == .failed
+              && failingRecorder.lastErrorMessage != nil,
+              failingRecorder.lastErrorMessage ?? "no error")
+    } else {
+        check("forced-failure recorder starts before injected write", false)
+    }
+
+    // App quit uses the same completion contract; exercise its terminal reason
+    // and queued tail independently from AppKit UI event delivery.
+    let quitRoot = recorderRoot.appendingPathComponent("quit-drain", isDirectory: true)
+    let quitRecorder = ExperimentRecorder(baseDirectory: quitRoot)
+    if let quitPath = quitRecorder.start() {
+        var quitTail = LabTelemetry()
+        quitTail.simMs = 9001
+        quitRecorder.append(quitTail)
+        let quitDone = DispatchSemaphore(value: 0)
+        quitRecorder.stop(reason: "application quit") { _ in quitDone.signal() }
+        let quitCompleted = quitDone.wait(timeout: .now() + 3) == .success
+        let quitTelemetry = (try? String(contentsOfFile: quitPath + "/telemetry.csv", encoding: .utf8)) ?? ""
+        let quitEvents = (try? String(contentsOfFile: quitPath + "/events.jsonl", encoding: .utf8)) ?? ""
+        check("application-quit recorder drain keeps tail",
+              quitCompleted && quitRecorder.state == .saved && quitTelemetry.contains(",9001,")
+              && quitEvents.contains("application quit"))
+    } else {
+        check("application-quit recorder starts", false)
     }
     try? fm.removeItem(at: recorderRoot)
     print(failures == 0 ? "ALL LAB TESTS PASS" : "\(failures) LAB TEST FAILURES")

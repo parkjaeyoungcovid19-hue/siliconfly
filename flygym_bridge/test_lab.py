@@ -3,6 +3,7 @@ import json
 import math
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -207,6 +208,13 @@ check("zero-intensity flash has no live timer",
 check("zero-intensity flash emits no stale event", zero_flash_world.drain_events() == [])
 
 world.set_wind(strength=0.7, direction_deg=90, duration_ms=100, continuous=False)
+wind_before_wall_wait = world.state()["wind"]["remaining_ms"]
+time.sleep(0.12)
+wind_after_wall_wait = world.state()["wind"]["remaining_ms"]
+check("timed wind is simulation-time based, not wall-clock based",
+      world.state()["wind"]["strength"] == 0.7 and
+      abs(wind_after_wall_wait - wind_before_wall_wait) < 1e-9,
+      f"before={wind_before_wall_wait:.3f}ms after={wind_after_wall_wait:.3f}ms")
 world.pre_step(0.05)
 check("timed wind active", 45 <= world.state()["wind"]["remaining_ms"] <= 55)
 world.pre_step(0.05)

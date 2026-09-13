@@ -41,6 +41,33 @@ private let gcSaltPhase: UInt32 = 0x2F1B_3C4D
 private let gcSaltBurst: UInt32 = 0x7A3B_9F11
 private let gcNoiseSalt: UInt32 = 2_654_435_761
 
+// Histogram ids are part of the CPU reference contract, not copied from the
+// live GPU group buffer. Keep these values in sync with the documented kernel
+// ABI and derive membership independently from the shipped connectome fields.
+private enum GCGroup {
+    static let loom: UInt8 = 1, gf: UInt8 = 2, dnaL: UInt8 = 3, dnaR: UInt8 = 4
+    static let mdn: UInt8 = 5, fwd: UInt8 = 6, groom: UInt8 = 7, escw: UInt8 = 8
+    static let foodL: UInt8 = 9, foodR: UInt8 = 10
+    static let thermoWarm: UInt8 = 11, thermoCool: UInt8 = 12
+    static let windC: UInt8 = 13, windE: UInt8 = 14
+    static let slots = 16
+
+    static let names = [
+        "ungrouped", "loom", "gf", "dnaL", "dnaR", "mdn", "fwd", "groom", "escw",
+        "foodL", "foodR", "thermoWarm", "thermoCool", "windC", "windE", "reserved"
+    ]
+}
+
+private func gcHistogram(_ spikes: ArraySlice<Int32>, groupOf: [UInt8]) -> [UInt32] {
+    var g = [UInt32](repeating: 0, count: GCGroup.slots)
+    for spike in spikes {
+        let i = Int(spike)
+        if i >= 0 && i < groupOf.count { g[Int(groupOf[i])] += 1 }
+    }
+    g[0] = 0
+    return g
+}
+
 // MARK: - CPU reference
 
 final class RefSim {
@@ -95,7 +122,7 @@ final class RefSim {
     private(set) var rateEscW: Float = 0, ratePop: Float = 0
     private(set) var simMs = 0, totalSpikes = 0
     private(set) var gfLatch = false
-    private(set) var lastGroupCounts = [UInt32](repeating: 0, count: 16)
+    private(set) var lastGroupCounts = [UInt32](repeating: 0, count: GCGroup.slots)
     var lastSpikes: [Int32] { Array(spikeBuf[0..<spikeCount]) }
     var membrane: [Float] { [Float](UnsafeBufferPointer(start: vObsP, count: n)) }
     var refractory: [UInt8] { [UInt8](UnsafeBufferPointer(start: refrP, count: n)) }
@@ -134,23 +161,42 @@ final class RefSim {
             let hetero = gcRange(ranges[Int(c.superClass[i])], i)
             switch c.role[i] {
             case Role.lc4, Role.lplc2:
-                base[i] = gcRange(params.baselineLoom, i); grp[i] = 1; kind[i] = left ? 1 : 2
+                base[i] = gcRange(params.baselineLoom, i); grp[i] = GCGroup.loom; kind[i] = left ? 1 : 2
                 if left { loomL += 1 } else { loomR += 1 }
             case Role.gf:
-                base[i] = params.baselineGF; grp[i] = 2
+                base[i] = params.baselineGF; grp[i] = GCGroup.gf
             case Role.dna01, Role.dna02:
                 base[i] = params.baselineCommand
-                grp[i] = left ? 3 : 4
+                grp[i] = left ? GCGroup.dnaL : GCGroup.dnaR
                 if left { dnaL += 1 } else { dnaR += 1 }
-            case Role.mdn:   base[i] = params.baselineCommand; grp[i] = 5; mdn += 1
-            case Role.dnp09: base[i] = params.baselineFwd;     grp[i] = 6; fwd += 1
-            case Role.dng11: base[i] = params.baselineCommand; grp[i] = 7; groom += 1
-            case Role.escw:  base[i] = params.baselineCommand; grp[i] = 8; escw += 1
+            case Role.mdn:   base[i] = params.baselineCommand; grp[i] = GCGroup.mdn; mdn += 1
+            case Role.dnp09: base[i] = params.baselineFwd;     grp[i] = GCGroup.fwd; fwd += 1
+            case Role.dng11: base[i] = params.baselineCommand; grp[i] = GCGroup.groom; groom += 1
+            case Role.escw:  base[i] = params.baselineCommand; grp[i] = GCGroup.escw; escw += 1
             case Role.ascend:
                 base[i] = hetero; kind[i] = 3
                 ph[i] = 2 * Float.pi * gcDraw(seed, gcSaltPhase, UInt32(i))
             case Role.sens:  base[i] = hetero; kind[i] = 4
             default:         base[i] = hetero
+            }
+
+            // Virtual Fly Lab V2 receptor telemetry groups. Membership is
+            // reconstructed from cell type, side and outgoing-row presence so
+            // this CPU oracle remains independent of MetalSim.groupOf.
+            if grp[i] == 0 {
+                let type = c.typeName[i]
+                if type == "ORN_DM1" || type == "ORN_VA2" {
+                    if c.side[i] == 1 { grp[i] = GCGroup.foodL }
+                    else if c.side[i] == 2 { grp[i] = GCGroup.foodR }
+                } else if type == "TRN_VP2" {
+                    grp[i] = GCGroup.thermoWarm
+                } else if type == "TRN_VP3a" || type == "TRN_VP3b" {
+                    grp[i] = GCGroup.thermoCool
+                } else if type.hasPrefix("JO-C") && c.rowStart[i + 1] > c.rowStart[i] {
+                    grp[i] = GCGroup.windC
+                } else if type.hasPrefix("JO-E") && c.rowStart[i + 1] > c.rowStart[i] {
+                    grp[i] = GCGroup.windE
+                }
             }
         }
         baseline = base; groupOf = grp; inputKind = kind; phase = ph
@@ -222,7 +268,7 @@ final class RefSim {
         rateFwd = 0; rateGroom = 0; rateEscW = 0; ratePop = 0
         burstUntil = 0; burstNext = 12_000; burstCounter = 0
         pendingStims.removeAll(); activeStims.removeAll()
-        lastGroupCounts = [UInt32](repeating: 0, count: 16)
+        lastGroupCounts = [UInt32](repeating: 0, count: GCGroup.slots)
         loomL = 0; loomR = 0; gaitDrive = 0; gaitPhase = 0; airPuff = 0
         activityScale = 1; sensoryGate = 1
     }
@@ -343,9 +389,7 @@ final class RefSim {
         totalSpikes += spikeCount
 
         // 4. group histogram + rate EMAs
-        var g = [UInt32](repeating: 0, count: 16)
-        for t in 0..<spikeCount { g[Int(groupOf[Int(spikeBuf[t])])] += 1 }
-        g[0] = 0
+        let g = gcHistogram(spikeBuf[0..<spikeCount], groupOf: groupOf)
         lastGroupCounts = g
         if g[2] > 0 { gfLatch = true }
         let a = p.rateAlpha
@@ -459,7 +503,13 @@ private func compareStep(_ sim: MetalSim, _ ref: RefSim, _ r: inout ScenarioResu
         let bad = (0..<ref.n).filter { gr[$0] != rr[$0] }
         r.detail.append("  refr differs on \(bad.count) neurons, first \(bad.prefix(5).map(String.init).joined(separator: ","))")
     }
-    if !groupsEqual { r.detail.append("  groups ref \(Array(rg[1...8])) gpu \(Array(gg[1...8]))") }
+    if !groupsEqual {
+        var diffs: [String] = []
+        for i in 1...14 where rg[i] != gg[i] {
+            diffs.append("\(i):\(GCGroup.names[i]) ref=\(rg[i]) gpu=\(gg[i])")
+        }
+        r.detail.append("  group diffs " + (diffs.isEmpty ? "none in slots 1...14" : diffs.joined(separator: ", ")))
+    }
     if !rateBad.isEmpty { r.detail.append("  rates: " + rateBad.joined(separator: "; ")) }
     if dv > 0, arg >= 0 {
         r.detail.append(String(format: "  max |Δv| %.6g at n%d (role %@): ref %.9g gpu %.9g — %@",
@@ -512,6 +562,23 @@ func runGPUCheck() {
 
     // ---- 0b. the load-time weight transform --------------------------------
     let ref = RefSim(c, params: params, seed: seed, fxScale: sim0.fixedPointScale)
+
+    // Negative control for the V2 receptor histogram oracle. Corrupt one known
+    // receptor assignment in a private copy and prove the histogram comparison
+    // notices it. This must not depend on MetalSim's runtime group buffer.
+    if let receptor = ref.groupOf.indices.first(where: { ref.groupOf[$0] >= GCGroup.foodL && ref.groupOf[$0] <= GCGroup.windE }) {
+        let oneSpike = [Int32(receptor)]
+        let expected = gcHistogram(oneSpike[...], groupOf: ref.groupOf)
+        var corrupted = ref.groupOf
+        corrupted[receptor] = 0
+        let bad = gcHistogram(oneSpike[...], groupOf: corrupted)
+        let detected = expected != bad
+        print("group oracle negative control: corrupt \(GCGroup.names[Int(ref.groupOf[receptor])]) n\(receptor) -> \(detected ? "detected" : "MISSED")")
+        if !detected { failures.append("receptor histogram negative control was not detected") }
+    } else {
+        print("group oracle negative control: no V2 receptor-group neuron found")
+        failures.append("no V2 receptor-group neuron available for histogram negative control")
+    }
     var wDiff = 0, wMaxDiff: Int32 = 0, wOrder = "independent factor order"
     if let gpuW = c.gpu.shared?.weightFx {
         let g = gpuW.contents().bindMemory(to: Int32.self, capacity: c.e)

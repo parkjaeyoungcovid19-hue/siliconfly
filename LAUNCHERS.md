@@ -58,7 +58,7 @@ socket 없이 Swift lab command queue/state parsing/direct-neural role mapping�
 ./ThongpariFlyNeuronSim --labloop
 ```
 
-`--labloop`는 실제 `lab_command`/ack/state/event 경로를 통해 sphere spawn, wind, flash, touch, `reset_body`, `reset_world`를 검사한다. real bridge를 이미 띄운 상태에서도 사용할 수 있다.
+`--labloop`는 실제 `lab_command`/ack/state/event 경로를 통해 고유한 sphere를 생성하고 wind, flash, touch, source timer 만료를 검사한 뒤 **자신이 만든 sphere만 삭제한다.** 기존 사용자 body/world를 reset하지 않는다. 만료 판정은 wall sleep이 아니라 body packet의 MuJoCo simulation time을 사용하며 packet generation/age도 진단에 포함한다. real bridge를 이미 띄운 상태에서도 사용할 수 있다.
 
 기존 bridge 진단도 그대로 사용할 수 있다.
 

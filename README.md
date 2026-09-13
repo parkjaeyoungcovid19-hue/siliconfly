@@ -9,7 +9,7 @@
   <img alt="macOS" src="https://img.shields.io/badge/platform-macOS-111111?style=flat-square">
   <img alt="Swift" src="https://img.shields.io/badge/frontend-Swift%20%2B%20Metal-F05138?style=flat-square">
   <img alt="FlyGym" src="https://img.shields.io/badge/body-FlyGym%202.1%20%2B%20MuJoCo-5C7CFA?style=flat-square">
-  <img alt="status" src="https://img.shields.io/badge/V2-validated-2E8B57?style=flat-square">
+  <img alt="status" src="https://img.shields.io/badge/V3-implementation%20complete-2E8B57?style=flat-square">
 </p>
 
 <p align="center">
@@ -24,11 +24,11 @@
 
 **Thongpari Fly Neuron Sim** turns the original SiliconFly desktop fly into an interactive **virtual fly lab**. The brain side runs the shipped FlyWire v783 connectome as a 139,255-neuron spiking network on the GPU. The body side runs a real NeuroMechFly v2 model in FlyGym / MuJoCo. A bidirectional bridge connects neural outputs to locomotion and sends measured body, vision, contact and environmental state back into the neural simulation.
 
-The goal is not to fake convincing animal behavior. V2 is built so that you can see where a response came from: **source → modeled sensor → receptor activity → brain output → controller → measured motion**.
+The goal is not to fake convincing animal behavior. The V2 feature set is preserved in V3 so that you can see where a response came from: **source → modeled sensor → receptor activity → brain output → controller → measured motion**. V3 stabilizes that loop and extracts the first explicit sensory/motor module boundaries without changing the model equations.
 
 ---
 
-## V2 at a glance
+## V2 feature set preserved in V3
 
 | Layer | Current V2 implementation |
 |---|---|
@@ -193,6 +193,7 @@ The current V2 tree has been exercised through the full Swift and Python regress
 
 ```sh
 ./build.sh
+./ThongpariFlyNeuronSim --gpucheck
 ./ThongpariFlyNeuronSim --labtest
 ./ThongpariFlyNeuronSim --bridgetest
 ./ThongpariFlyNeuronSim --simtest
@@ -207,6 +208,19 @@ The current V2 tree has been exercised through the full Swift and Python regress
 The final full launcher validation on the development M2 Air sustained roughly **40–41 body packets/s**, **~60 brain packets/s**, no long stale-body gaps, and approximately **0.79–0.83× simulation-time / wall-time** while the real viewer and GUI were open. The UI explicitly reports degraded body feedback if it drops below 30 Hz.
 
 These measurements are machine-specific observations, not a guaranteed benchmark.
+
+### V3 stabilization status — 2026-09-13
+
+V3 implementation is **complete in this working tree**, following `VIRTUAL_FLY_LAB_V3_PLAN.md`. Final user-side/manual validation is intentionally separate. On the development Apple M2 Mac, the implementation has concrete regression evidence:
+
+- the independent CPU `--gpucheck` reference reconstructs V2 ORN/TRN/JO receptor histogram groups and passes the full GPU comparison, including a corrupted-group negative control;
+- `--labloop` uses backend simulation time for timed wind/touch expiry and passes against both mock and real headless FlyGym without resetting an existing user's body/world;
+- the experiment recorder now reports `stopping` until queued telemetry/events are flushed and file handles close, propagates write failures, and exposes a completion path used by AppKit termination;
+- a separate `git archive` copy builds `ThongpariFlyNeuronSim` without an inherited `SiliconFly` binary, and a fresh Python 3.12 environment installs `flygym_bridge/requirements.txt` successfully (`FlyGym 2.1.0`, `MuJoCo 3.9.0`, `NumPy 2.5.3` in this validation);
+- a fresh real viewer + GUI launch connected successfully and sustained roughly 39–41 body packets/s, ~60 brain packets/s and ~0.79–0.81× simulation/wall time during this smoke run.
+- V2 source→sensory-drive transforms now live behind `SensoryModel.swift`, and neural-rate→body-command readout lives behind `MotorReadout.swift`; frozen V2 formula oracles plus same-seed downstream neural-state parity prove the extraction did not change model behavior.
+
+The 2026-09-13 GUI smoke was terminated from the validation terminal after confirming startup/connectivity; it did **not** count as an end-to-end GUI recording + normal-menu-Quit test. The user will perform that final manual validation separately. See `V3_COMPLETION_REPORT.md` for exact commands, results and limitations.
 
 ---
 
@@ -245,6 +259,8 @@ The project is therefore best used for **controlled comparisons inside the same 
 ├── LabWindow.swift                Virtual Fly Lab UI
 ├── LabProtocol.swift              lab state / telemetry / tests
 ├── ExperimentRecorder.swift       events + CSV recording
+├── SensoryModel.swift             modeled source → receptor-drive boundary
+├── MotorReadout.swift              neural population rate → BrainSignals boundary
 ├── flygym_bridge/
 │   ├── bridge.py                  Python server
 │   ├── fly_body.py                mock + real FlyGym body
@@ -253,7 +269,9 @@ The project is therefore best used for **controlled comparisons inside the same 
 │   └── test_*.py                  Python regression suite
 ├── VIRTUAL_FLY_LAB_GUIDE.md       full V2 user guide
 ├── VIRTUAL_FLY_LAB_V2_FIX_PLAN.md repaired V2 defect checklist
-└── VIRTUAL_FLY_LAB_V3_PLAN.md     future work; not implemented in V2
+├── VIRTUAL_FLY_LAB_V3_PLAN.md     completed V3 implementation contract
+├── V3_COMPLETION_REPORT.md         V3 validation evidence / limitations
+└── VIRTUAL_FLY_LAB_ROADMAP.md     V4+ long-term platform roadmap
 ```
 
 For detailed controls and exact preset values, see **[VIRTUAL_FLY_LAB_GUIDE.md](VIRTUAL_FLY_LAB_GUIDE.md)**. Bridge internals and protocol details are in **[flygym_bridge/README.md](flygym_bridge/README.md)**.

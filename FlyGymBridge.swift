@@ -1215,11 +1215,27 @@ func runLabLoopTest() {
     func command(_ name: String, _ id: Int) {
         let ack = waitAck(id)
         let ok = ack?.ok == true
-        print("\(ok ? "PASS" : "FAIL")  labloop \(name) ack=\(ack?.id ?? -1) \(ack?.message ?? "timeout")")
+        let fresh = fg.labAckFreshness()
+        let ageMs = fresh.ageSeconds.map { String(format: "%.0f", $0 * 1000) } ?? "n/a"
+        print("\(ok ? "PASS" : "FAIL")  labloop \(name) ack=\(ack?.id ?? -1) \(ack?.message ?? "timeout")"
+              + " gen=\(fresh.packetGeneration.map(String.init) ?? "n/a")/\(fresh.currentGeneration) age=\(ageMs)ms")
         if !ok { failures += 1 }
     }
 
-    let spawn = fg.sendLab(action: "spawn_sphere", target: "labloop_ball",
+    func bodyDiagnostic(_ body: FlyGymBodyFeedback?) -> String {
+        let fresh = fg.bodyFreshness()
+        let ageMs = fresh.ageSeconds.map { String(format: "%.0f", $0 * 1000) } ?? "n/a"
+        guard let body else {
+            return "body=nil gen=\(fresh.packetGeneration.map(String.init) ?? "n/a")/\(fresh.currentGeneration) age=\(ageMs)ms fresh=\(fresh.isFresh)"
+        }
+        return String(format: "t=%.4fs dt=%.4fs wind=%.3f touch=%.3f gen=%@/%llu age=%@ms fresh=%@",
+                      body.simTime, body.simDt, body.windStrength, body.touchStrength,
+                      fresh.packetGeneration.map(String.init) ?? "n/a", fresh.currentGeneration,
+                      ageMs, fresh.isFresh ? "yes" : "no")
+    }
+
+    let objectID = "labloop_ball_\(ProcessInfo.processInfo.processIdentifier)"
+    let spawn = fg.sendLab(action: "spawn_sphere", target: objectID,
                            x: 20, y: 5, z: 3, size: 4)
     command("spawn", spawn)
     if (fg.latestLabState()?.objectCount ?? 0) < 1 {
@@ -1238,30 +1254,52 @@ func runLabLoopTest() {
     command("touch", touch)
     let sourceDeadline = Date().addingTimeInterval(0.25)
     var sourceOK = false
+    var sourceBody: FlyGymBodyFeedback?
     while Date() < sourceDeadline {
         if let body = fg.latestBody(), body.windStrength > 0.19, body.windSensory,
            body.touchStrength > 0.19, body.touchSensory {
             sourceOK = true
+            sourceBody = body
             break
         }
         Thread.sleep(forTimeInterval: 0.01)
     }
-    print("\(sourceOK ? "PASS" : "FAIL")  labloop body packet is wind/touch source-of-truth")
+    print("\(sourceOK ? "PASS" : "FAIL")  labloop body packet is wind/touch source-of-truth — \(bodyDiagnostic(sourceBody ?? fg.latestBody()))")
     if !sourceOK { failures += 1 }
-    Thread.sleep(forTimeInterval: 0.40)
-    let expired = fg.latestBody()
-    let expiredOK = expired?.windStrength == 0 && expired?.touchStrength == 0
-    print("\(expiredOK ? "PASS" : "FAIL")  labloop body source clears on backend timer expiry")
+
+    // The backend timer is expressed in MuJoCo simulation time, not wall time.
+    // A slow real backend may need much more than 300 ms of wall time to advance
+    // 300 ms of simulation. Wait for the body clock to cross the requested
+    // duration and use wall time only as a hang guard. If the simulation clock
+    // advances but the source does not clear, the timer path is genuinely broken.
+    let sourceSimTime = sourceBody?.simTime ?? fg.latestBody()?.simTime ?? 0
+    let expiryTargetSimTime = sourceSimTime + 0.32
+    let expiryWallDeadline = Date().addingTimeInterval(12.0)
+    var expired: FlyGymBodyFeedback?
+    var crossedExpiryTime = false
+    while Date() < expiryWallDeadline {
+        if let body = fg.latestBody() {
+            expired = body
+            if body.simTime >= expiryTargetSimTime {
+                crossedExpiryTime = true
+                if body.windStrength == 0 && body.touchStrength == 0 { break }
+            }
+        }
+        Thread.sleep(forTimeInterval: 0.01)
+    }
+    let expiredOK = crossedExpiryTime && expired?.windStrength == 0 && expired?.touchStrength == 0
+    print("\(expiredOK ? "PASS" : "FAIL")  labloop body source clears on simulation-time timer expiry"
+          + " target_t=\(String(format: "%.4f", expiryTargetSimTime))s — \(bodyDiagnostic(expired))")
     if !expiredOK { failures += 1 }
     if let event = fg.latestLabEvent() {
         print("PASS  labloop event \(event.event)")
     } else {
         print("FAIL  labloop event missing"); failures += 1
     }
-    let reset = fg.sendLab(action: "reset_body")
-    command("reset_body", reset)
-    let cleanup = fg.sendLab(action: "reset_world")
-    command("reset_world", cleanup)
+    // Clean up only the object this test created. Never reset an already-running
+    // user's body/world merely because --labloop connected to that listener.
+    let cleanup = fg.sendLab(action: "delete_object", target: objectID)
+    command("delete_object", cleanup)
 
     fg.stop()
     print(failures == 0 ? "LABLOOP PASS" : "LABLOOP FAIL (\(failures))")

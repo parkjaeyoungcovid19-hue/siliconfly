@@ -581,72 +581,7 @@ func runBehaviorTest() {
     exit(failures == 0 ? 0 : 1)
 }
 
-// MARK: - Signals
-
-// Converts sim population rates into body commands. Shared by the app loop
-// and --behaviortest so both exercise the identical mapping.
-final class SignalBuilder {
-    private var dnaBaseline: Float = 0
-
-    func reset() { dnaBaseline = 0 }
-
-    /// DNp09 rate -> walk drive and DNg11 rate -> groom drive, static so --simtest's
-    /// duty-cycle probes measure the identical mapping the body is driven by.
-    static func walkDrive(_ rateFwd: Float) -> CGFloat { clampf((CGFloat(rateFwd) - 10) / 33, 0, 1.3) }
-    static func groomDrive(_ rateGroom: Float) -> CGFloat { clampf(CGFloat(rateGroom) / 5, 0, 1.5) }
-
-    func make(_ sim: MetalSim, dt: CGFloat) -> BrainSignals {
-        let diff = sim.rateDNaL - sim.rateDNaR
-        // Slow adaptation (tau ~8 s): the connectome's persistent left/right
-        // wiring asymmetry is adapted out, so steady-state walking is straight
-        // and only transient DNa asymmetries (visual, stimulation) steer.
-        dnaBaseline += (diff - dnaBaseline) * Float(min(1, dt / 8))
-        var s = BrainSignals()
-        s.escape = sim.consumeGF()
-        s.nervous = clampf(CGFloat(sim.rateLoom) / 115, 0, 1)
-        s.turnBias = clampf(CGFloat(diff - dnaBaseline) * 0.04, -1.0, 1.0)
-        // MDN rests at ~28 Hz network-driven (p95 40 Hz): 60 Hz is above that resting
-        // tail and far below the ~200 Hz an MDN stimulation reaches.
-        s.backward = sim.rateMDN > 60
-        // DNp09 rests at ~22 Hz network-driven (p05 6, p50 14, p95 25), so walkDrive
-        // is rectified-linear: 10/33 straddles the resting swing with FlyModel's
-        // hysteresis band (0.22 entry = 17.3 Hz, 0.08 exit = 12.6 Hz).
-        s.walkDrive = SignalBuilder.walkDrive(sim.rateFwd)
-        // DNg11 is weakly wired and rests near the floor (p50 0.5-2.1 Hz, p95 2.9-5.4)
-        // while a click stim reaches ~200 Hz: /5 puts rest under FlyModel's 0.3
-        // groom-exit and any real stim at the 1.5 clamp.
-        s.groomDrive = SignalBuilder.groomDrive(sim.rateGroom)
-        s.wingDrive = clampf(CGFloat(sim.rateEscW) / 10, 0, 1.3)
-        // whole-brain rate rests at ~1.9 Hz/neuron and multiplies inside an arousal
-        // burst; /10 keeps rest at ~0.19, so only a burst crosses FlyModel's 0.5
-        // spontaneous-takeoff gate.
-        s.arousal = clampf(CGFloat(sim.ratePop) / 10, 0, 1)
-        return s
-    }
-}
-
 // MARK: - Coordinator
-
-struct LabBackendSensoryState {
-    var wind: Float = 0
-    var windDirectionDeg: Double = 0
-    var touchDrive: Float = 0
-}
-
-/// Translate only the backend's *currently active* stimulus state into modeled
-/// neural source scalars. The selected physical touch target is intentionally not
-/// used here: the neural touch path is generic, while body-part specificity exists
-/// only in the MuJoCo physical impulse.
-func labBackendSensoryState(_ fb: FlyGymBodyFeedback?) -> LabBackendSensoryState {
-    guard let fb else { return LabBackendSensoryState() }
-    let wind = fb.windSensory ? Float(min(1, max(0, fb.windStrength))) : 0
-    let touchStrength = min(1, max(0, fb.touchStrength))
-    let touch = (fb.touchSensory && touchStrength > 0)
-        ? (0.02 + 0.18 * Float(touchStrength)) : 0
-    return LabBackendSensoryState(wind: wind,
-                                  windDirectionDeg: fb.windDirectionDeg,
-                                  touchDrive: touch)
-}
 
 final class Coordinator: NSObject, SCNSceneRendererDelegate {
     let scene: SCNScene
@@ -804,9 +739,7 @@ final class Coordinator: NSObject, SCNSceneRendererDelegate {
         enqueue { c in
             let temp = min(40, max(10, celsius))
             c.labTemperatureC = temp
-            c.labTempoOverride = modeledPhysiology
-                ? clampf(CGFloat(1 + (temp - 25) * 0.03), 0.55, 1.45)
-                : nil
+            c.labTempoOverride = modeledPhysiology ? SensoryModel.locomotorTempo(celsius: temp) : nil
             c.labThermosensoryEnabled = flywireSensory
             if !flywireSensory {
                 c.labThermoWarmDrive = 0; c.labThermoCoolDrive = 0
@@ -982,7 +915,7 @@ final class Coordinator: NSObject, SCNSceneRendererDelegate {
                 // includes command-queue latency, exact MuJoCo-timer expiry and
                 // reset semantics, so Swift no longer runs a second competing
                 // timer while the real backend is active.
-                let backend = labBackendSensoryState(fb)
+                let backend = SensoryModel.backendState(fb)
                 labWind = backend.wind
                 labWindDirectionDeg = backend.windDirectionDeg
                 labWindContinuous = false
@@ -1032,27 +965,19 @@ final class Coordinator: NSObject, SCNSceneRendererDelegate {
             // concentrations become measurable while the maximum injected
             // current remains 0.060. This is an explicit modeling assumption,
             // not a measured odor-transduction law.
-            func odorCurrent(_ x: Float) -> Float {
-                let bounded = min(1, max(0, x))
-                return 0.060 * sqrt(sqrt(bounded)) * sim.sensoryGate
-            }
-            labOdorDriveL = odorCurrent(odor.l)
-            labOdorDriveR = odorCurrent(odor.r)
+            labOdorDriveL = SensoryModel.odorCurrent(odor.l, sensoryGate: sim.sensoryGate)
+            labOdorDriveR = SensoryModel.odorCurrent(odor.r, sensoryGate: sim.sensoryGate)
             sim.setModeledSensoryDrive(.foodOdorLeft, indices: sim.foodOdorLeft, strength: labOdorDriveL)
             sim.setModeledSensoryDrive(.foodOdorRight, indices: sim.foodOdorRight, strength: labOdorDriveR)
 
             // Identified FlyWire thermoreceptor types, with a deliberately simple
             // neutral-at-25C transduction curve. `flywire_sensory` is distinct
             // from the older direct locomotor-tempo approximation.
-            if labThermosensoryEnabled {
-                let warm = Float(max(0, min(1, (labTemperatureC - 25) / 10)))
-                let cool = Float(max(0, min(1, (25 - labTemperatureC) / 10)))
-                let thermalGain: Float = 0.060
-                labThermoWarmDrive = warm * thermalGain * sim.sensoryGate
-                labThermoCoolDrive = cool * thermalGain * sim.sensoryGate
-            } else {
-                labThermoWarmDrive = 0; labThermoCoolDrive = 0
-            }
+            let thermal = SensoryModel.thermal(celsius: labTemperatureC,
+                                               enabled: labThermosensoryEnabled,
+                                               sensoryGate: sim.sensoryGate)
+            labThermoWarmDrive = thermal.warm
+            labThermoCoolDrive = thermal.cool
             sim.setModeledSensoryDrive(.thermoWarm, indices: sim.thermoWarm, strength: labThermoWarmDrive)
             sim.setModeledSensoryDrive(.thermoCool, indices: sim.thermoCool, strength: labThermoCoolDrive)
 
@@ -1060,24 +985,20 @@ final class Coordinator: NSObject, SCNSceneRendererDelegate {
             // exact antenna mechanics are not modeled; world wind direction is
             // projected onto a body-relative opponent scalar before driving the
             // real cell types. This replaces the biologically wrong JO-A/B path.
-            if labWind > 0 {
-                let windRad = labWindDirectionDeg * .pi / 180
-                // Prefer the actual MuJoCo thorax yaw when a fresh FlyGym body
-                // packet exists. The desktop fly heading is only a disconnected
-                // fallback, and visual `bearing` is never reused for this.
-                let bodyHeading = FlyGymSensoryMap.heading(body: bodyFeedback) ?? Double(first.heading)
-                let relative = windRad - bodyHeading
-                let opponent = Float(cos(relative))
-                let windGain: Float = 0.055
-                labWindCDrive = labWind * (0.5 + 0.5 * opponent) * windGain * sim.sensoryGate
-                labWindEDrive = labWind * (0.5 - 0.5 * opponent) * windGain * sim.sensoryGate
-            } else {
-                labWindCDrive = 0; labWindEDrive = 0
-            }
+            // Prefer the actual MuJoCo thorax yaw when a fresh FlyGym body packet
+            // exists. The desktop fly heading is only a disconnected fallback.
+            let bodyHeading = FlyGymSensoryMap.heading(body: bodyFeedback) ?? Double(first.heading)
+            let windDrive = SensoryModel.wind(strength: labWind,
+                                              directionDeg: labWindDirectionDeg,
+                                              bodyHeading: bodyHeading,
+                                              sensoryGate: sim.sensoryGate)
+            labWindCDrive = windDrive.c
+            labWindEDrive = windDrive.e
             sim.setModeledSensoryDrive(.windC, indices: sim.windC, strength: labWindCDrive)
             sim.setModeledSensoryDrive(.windE, indices: sim.windE, strength: labWindEDrive)
 
-            let touchDrive = labTouchDrive * sim.sensoryGate
+            let touchDrive = SensoryModel.touch(sourceDrive: labTouchDrive,
+                                                sensoryGate: sim.sensoryGate)
             sim.setModeledSensoryDrive(.touchGeneric, indices: sim.sens, strength: touchDrive)
             // body -> brain: FlyGym proprioception when fresh, else the
             // procedural fly's own gait. Mapping = MODELING ASSUMPTION.
@@ -1142,6 +1063,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var dataInfo = "no data — run etl.py"
     var screenFrame = NSRect.zero
     var moveDisplayItem: NSMenuItem?
+    private var terminationPending = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard let screen = NSScreen.main else { fatalError("no screen") }
@@ -1296,8 +1218,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(item("Remove Fly", #selector(removeFly), "r"))
         menu.addItem(item("Scare Flies", #selector(scareAll), "s"))
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        menu.addItem(item("Quit", #selector(requestQuit), "q"))
         statusItem.menu = menu
+    }
+
+    @objc func requestQuit() { NSApp.terminate(nil) }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if terminationPending { return .terminateLater }
+        guard let labWC, labWC.hasRecordingToFinish else { return .terminateNow }
+
+        terminationPending = true
+        labWC.prepareForApplicationTermination { outcome in
+            switch outcome {
+            case .saved(let path):
+                fputs("lab recorder: quit drain saved \(path)\n", stderr)
+            case .failed(let path, let message):
+                fputs("lab recorder: quit drain failed \(message) \(path ?? "")\n", stderr)
+            case .notRecording:
+                break
+            }
+            self.terminationPending = false
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        flyGymBridge?.stop()
     }
 
     @objc func togglePause(_ sender: NSMenuItem) {

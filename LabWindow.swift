@@ -90,6 +90,8 @@ final class LabWindowController: NSWindowController, NSWindowDelegate {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
+    var hasRecordingToFinish: Bool { recorder.isRecording || recorder.isStopping }
+
     func show() {
         window?.center()
         showWindow(nil)
@@ -793,13 +795,61 @@ final class LabWindowController: NSWindowController, NSWindowDelegate {
     }
 
     @objc private func startRecording() {
+        if recorder.isStopping {
+            recorderLabel.stringValue = "stopping… previous recording is still being flushed"
+            return
+        }
         if let p = recorder.start() { recorderLabel.stringValue = "recording: \(p)" }
-        else { recorderLabel.stringValue = "recording failed — see stderr" }
+        else { recorderLabel.stringValue = "recording failed — \(recorder.lastErrorMessage ?? "see stderr")" }
     }
     @objc private func stopRecording() {
         let p = recorder.path ?? ""
-        recorder.stop()
-        recorderLabel.stringValue = p.isEmpty ? "not recording" : "saved: \(p)"
+        guard recorder.isRecording || recorder.isStopping else {
+            recorderLabel.stringValue = p.isEmpty ? "not recording" : recorder.state.rawValue + ": " + p
+            return
+        }
+        recorderLabel.stringValue = p.isEmpty ? "stopping…" : "stopping: \(p)"
+        recorder.stop { [weak self] outcome in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                switch outcome {
+                case .saved(let path):
+                    self.recorderLabel.stringValue = "saved: \(path)"
+                case .failed(let path, let message):
+                    let whereText = path.map { " — \($0)" } ?? ""
+                    self.recorderLabel.stringValue = "save failed: \(message)\(whereText)"
+                case .notRecording:
+                    self.recorderLabel.stringValue = "not recording"
+                }
+            }
+        }
+    }
+
+    /// App termination waits for the same recorder drain/close completion as the
+    /// manual Stop button. The caller decides when to reply to AppKit's quit request.
+    func prepareForApplicationTermination(completion: @escaping (ExperimentRecorderStopOutcome) -> Void) {
+        guard recorder.isRecording || recorder.isStopping else {
+            // Keep AppDelegate's terminateLater/reply ordering asynchronous even
+            // if a manual Stop finishes in the narrow gap before this call.
+            let outcome = ExperimentRecorderStopOutcome.notRecording(path: recorder.path)
+            DispatchQueue.main.async { completion(outcome) }
+            return
+        }
+        let p = recorder.path ?? ""
+        recorderLabel.stringValue = p.isEmpty ? "stopping for quit…" : "stopping for quit: \(p)"
+        recorder.stop(reason: "application quit") { [weak self] outcome in
+            DispatchQueue.main.async {
+                if let self {
+                    switch outcome {
+                    case .saved(let path): self.recorderLabel.stringValue = "saved: \(path)"
+                    case .failed(let path, let message):
+                        self.recorderLabel.stringValue = "save failed: \(message)\(path.map { " — \($0)" } ?? "")"
+                    case .notRecording: self.recorderLabel.stringValue = "not recording"
+                    }
+                }
+                completion(outcome)
+            }
+        }
     }
     @objc private func markBaseline() { recorder.mark(kind: "marker", detail: "baseline") }
     @objc private func markStimulusOn() { recorder.mark(kind: "marker", detail: "stimulus_on") }
