@@ -28,6 +28,7 @@ V3/V2 and original FlyGym plans are historical. The former roadmap is preserved 
 
 ## Reports
 
+- `reports/V5_PROGRESS.md` — V5 baseline gate, installed viewport/picking API preflight, step tracker and first implementation slice.
 - `reports/V4_COMPLETION_REPORT.md` — V4 fixed-tick/session implementation, full regression and real Viewer acceptance evidence.
 - `reports/V3_COMPLETION_REPORT.md` — V3 implementation and regression evidence.
 - `reports/V3_VERIFICATION_REPORT_2026-09-13.md` — independent V3 verification and remediation history.

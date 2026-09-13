@@ -1,6 +1,8 @@
 # Virtual Fly Lab V5 — 통합 Viewer와 세계 안의 사용자
 
-작성: 2026-09-13 · 상태: **PLANNED / NOT IMPLEMENTED BY THIS DOCUMENT UPDATE**
+작성: 2026-09-13 · 상태: **READY TO IMPLEMENT / V5.1 NEXT / RUNTIME NOT YET IMPLEMENTED**
+
+착수 기준: V4 completion commit `e900b27` (`Complete Virtual Fly Lab V4 deterministic sessions`). 구현 진행표와 V5.1 API preflight는 [`../reports/V5_PROGRESS.md`](../reports/V5_PROGRESS.md)에 기록한다.
 
 선행: **V4 완료 후에만 착수**. 병렬로 다음 버전 기능을 구현하거나 버전 순서를 바꾸지 않는다.
 
@@ -12,7 +14,7 @@
 
 ## 2. 시작 전 반드시 확인할 것
 
-V4 시간·pause·epoch 검증과 완료 보고서가 있어야 한다. 현재 LabWindow 2D 배치 화면과 MuJoCo viewer가 별개라는 기준을 확인한다.
+V4 시간·pause·epoch 검증과 완료 보고서가 있어야 한다. 이 조건은 `e900b27`에서 충족됐다. 현재 LabWindow 2D 배치 화면과 MuJoCo viewer가 별개라는 기준을 확인한다.
 
 1. 저장소 루트에서 git status와 이전 버전 완료 보고서를 읽는다. 미커밋 사용자 변경을 보존한다.
 2. 이전 보고서의 자동 검증/real backend/GUI 검증을 따로 확인한다. 실패를 무시하고 진행하지 않는다.
@@ -58,6 +60,8 @@ session/epoch/tick, object IDs/pose/geometry revision, player pose, fly pose. im
 ### 5.1. 현재 API 조사 및 viewport 실험
 
 **할 일:** 설치된 MuJoCo/FlyGym source에서 렌더·depth/picking·eye scene 연결을 확인한다. 기존 viewer 확장과 native viewport를 최소 장면으로 비교하고 선택 근거를 남긴다. 지원하지 않는 embedding API를 추측해 쓰지 않는다.
+
+**준비 단계 확인:** 설치된 MuJoCo 3.9.0에는 offscreen `Renderer`, depth rendering, `mj_ray`, `mjv_select`가 있다. macOS `launch_passive`는 설치 source상 `mjpython` UI thread의 별도 Simulate GUI이며 AppKit host view/window를 받는 공개 embedding 인자는 확인되지 않았다. 따라서 첫 prototype은 AppKit-native SceneKit snapshot mirror와 MuJoCo offscreen renderer를 실제 scene으로 비교하고, passive viewer는 동일 backend 시각 대조로 유지한다. 상세 근거는 `V5_PROGRESS.md`에 있다.
 
 **완료 출력:** 렌더 선택 문서: 같은 geometry가 화면/충돌/눈에 반영되고 키보드 입력을 받을 수 있다는 실행 증거.
 
