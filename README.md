@@ -9,7 +9,7 @@
   <img alt="macOS" src="https://img.shields.io/badge/platform-macOS-111111?style=flat-square">
   <img alt="Swift" src="https://img.shields.io/badge/frontend-Swift%20%2B%20Metal-F05138?style=flat-square">
   <img alt="FlyGym" src="https://img.shields.io/badge/body-FlyGym%202.1%20%2B%20MuJoCo-5C7CFA?style=flat-square">
-  <img alt="status" src="https://img.shields.io/badge/V3-implementation%20complete-2E8B57?style=flat-square">
+  <img alt="status" src="https://img.shields.io/badge/V3-verification%20fixes%20complete-2E8B57?style=flat-square">
 </p>
 
 <p align="center">
@@ -189,7 +189,7 @@ Telemetry includes neural rates, modeled sensory drive, receptor EMA spike rates
 
 ## Validation status
 
-The current V2 tree has been exercised through the full Swift and Python regression set, including the real MuJoCo body and rendered-eye path:
+The current V3 tree has been exercised through the full Swift and Python regression set, including the real MuJoCo body and rendered-eye path:
 
 ```sh
 ./build.sh
@@ -211,16 +211,18 @@ These measurements are machine-specific observations, not a guaranteed benchmark
 
 ### V3 stabilization status — 2026-09-13
 
-V3 implementation is **complete in this working tree**, following `VIRTUAL_FLY_LAB_V3_PLAN.md`. Final user-side/manual validation is intentionally separate. On the development Apple M2 Mac, the implementation has concrete regression evidence:
+V3 implementation and the follow-up fixes from the independent verification report are **complete in the local repository**. The main V3 implementation is commit `31bd106`; the verification remediation is commit `4995162`. Final user-side/manual GUI validation is intentionally separate. On the development Apple M2 Mac, the current code has concrete regression evidence:
 
 - the independent CPU `--gpucheck` reference reconstructs V2 ORN/TRN/JO receptor histogram groups and passes the full GPU comparison, including a corrupted-group negative control;
 - `--labloop` uses backend simulation time for timed wind/touch expiry and passes against both mock and real headless FlyGym without resetting an existing user's body/world;
+- expiry verification now rejects a frozen timer, a 10×-late duration and a 0.1×-early duration instead of accepting any eventual clear inside a wall-clock timeout;
 - the experiment recorder now reports `stopping` until queued telemetry/events are flushed and file handles close, propagates write failures, and exposes a completion path used by AppKit termination;
+- if recording finalization fails during Quit, AppKit no longer silently exits: the Lab window remains available with the error/path and the user must explicitly choose whether to keep the app open or `Quit Anyway`;
 - a separate `git archive` copy builds `ThongpariFlyNeuronSim` without an inherited `SiliconFly` binary, and a fresh Python 3.12 environment installs `flygym_bridge/requirements.txt` successfully (`FlyGym 2.1.0`, `MuJoCo 3.9.0`, `NumPy 2.5.3` in this validation);
 - a fresh real viewer + GUI launch connected successfully and sustained roughly 39–41 body packets/s, ~60 brain packets/s and ~0.79–0.81× simulation/wall time during this smoke run.
 - V2 source→sensory-drive transforms now live behind `SensoryModel.swift`, and neural-rate→body-command readout lives behind `MotorReadout.swift`; frozen V2 formula oracles plus same-seed downstream neural-state parity prove the extraction did not change model behavior.
 
-The 2026-09-13 GUI smoke was terminated from the validation terminal after confirming startup/connectivity; it did **not** count as an end-to-end GUI recording + normal-menu-Quit test. The user will perform that final manual validation separately. See `V3_COMPLETION_REPORT.md` for exact commands, results and limitations.
+The 2026-09-13 GUI smoke was terminated from the validation terminal after confirming startup/connectivity; it did **not** count as an end-to-end GUI recording + normal-menu-Quit test. The user will perform that final manual validation separately. See `V3_COMPLETION_REPORT.md` for implementation evidence and `V3_VERIFICATION_REPORT_2026-09-13.md` for the independent verification findings, fault injection and remediation status.
 
 ---
 
@@ -260,7 +262,7 @@ The project is therefore best used for **controlled comparisons inside the same 
 ├── LabProtocol.swift              lab state / telemetry / tests
 ├── ExperimentRecorder.swift       events + CSV recording
 ├── SensoryModel.swift             modeled source → receptor-drive boundary
-├── MotorReadout.swift              neural population rate → BrainSignals boundary
+├── MotorReadout.swift             neural population rate → BrainSignals boundary
 ├── flygym_bridge/
 │   ├── bridge.py                  Python server
 │   ├── fly_body.py                mock + real FlyGym body
@@ -271,6 +273,7 @@ The project is therefore best used for **controlled comparisons inside the same 
 ├── VIRTUAL_FLY_LAB_V2_FIX_PLAN.md repaired V2 defect checklist
 ├── VIRTUAL_FLY_LAB_V3_PLAN.md     completed V3 implementation contract
 ├── V3_COMPLETION_REPORT.md         V3 validation evidence / limitations
+├── V3_VERIFICATION_REPORT_2026-09-13.md independent V3 verification + remediation
 └── VIRTUAL_FLY_LAB_ROADMAP.md     V4+ long-term platform roadmap
 ```
 
