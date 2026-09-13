@@ -27,7 +27,7 @@ final class ExperimentRecorder {
         let fm = FileManager.default
         let base = baseDirectory ?? fm.homeDirectoryForCurrentUser
             .appendingPathComponent("Documents", isDirectory: true)
-            .appendingPathComponent("SiliconFlyExperiments", isDirectory: true)
+            .appendingPathComponent("ThongpariFlyNeuronSimExperiments", isDirectory: true)
         do {
             try fm.createDirectory(at: base, withIntermediateDirectories: true)
             let formatter = DateFormatter()
@@ -46,7 +46,7 @@ final class ExperimentRecorder {
             fm.createFile(atPath: telemetryURL.path, contents: Data(LabTelemetry.csvHeader.utf8))
             fm.createFile(atPath: eventsURL.path, contents: Data())
             let meta: [String: Any] = [
-                "format": "SiliconFly Virtual Fly Lab V2",
+                "format": "Thongpari Fly Neuron Sim Virtual Fly Lab V2",
                 "created_at": ISO8601DateFormatter().string(from: Date()),
                 "telemetry": "telemetry.csv",
                 "events": "events.jsonl"

@@ -1,4 +1,4 @@
-# flygym_bridge — SiliconFly brain <-> FlyGym 2.x body
+# flygym_bridge — Thongpari Fly Neuron Sim brain <-> FlyGym 2.x body
 
 Swift (`FlyGymBridge.swift`) is the TCP client, `bridge.py` is the
 server on `127.0.0.1:17841`, newline-delimited JSON (see `protocol.py`).
@@ -23,7 +23,7 @@ Virtual Fly Lab V2 extends the same stream with `lab_command`, `lab_state`, and
 No torch / TF / RL / Docker / CUDA / Warp.
 
 The first viewer launch performs JIT/graphics prewarming before opening the TCP
-listener and can take about 30 seconds on the M2 Air. SiliconFly reconnects in
+listener and can take about 30 seconds on the M2 Air. Thongpari Fly Neuron Sim reconnects in
 the background; normal brain simulation never waits on it.
 
 ## Mapping (engineering approximations, not measured biology)
@@ -129,15 +129,15 @@ python3 flygym_bridge/test_bridge.py   # protocol + decoder + mock (no deps)
 python3 flygym_bridge/test_lab.py      # lab protocol/queues/world/mock integration
 ./flygym-venv/bin/python flygym_bridge/test_lab_real.py  # real MuJoCo smoke
 ./flygym-venv/bin/python flygym_bridge/test_vision_real.py # real rendered generic loom
-./SiliconFly --bridgetest   # Swift serialization/mapping/bounds
-./SiliconFly --bridgeloop   # live TCP loop (needs bridge.py --mock)
+./ThongpariFlyNeuronSim --bridgetest   # Swift serialization/mapping/bounds
+./ThongpariFlyNeuronSim --bridgeloop   # live TCP loop (needs bridge.py --mock)
 ```
 
 ## Launch
 
 For normal user-facing Virtual Fly Lab work, the recommended launcher is the
-repository-root **`SiliconFly 실험실.command`**. Double-click it in Finder; it
-starts the real FlyGym/MuJoCo bridge and `SiliconFly --flygym`, which opens the
+repository-root **`Thongpari Fly Neuron Sim 실험실.command`**. Double-click it in Finder; it
+starts the real FlyGym/MuJoCo bridge and `ThongpariFlyNeuronSim --flygym`, which opens the
 Lab window automatically.
 
 CLI equivalents / diagnostics:

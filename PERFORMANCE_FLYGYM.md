@@ -1,4 +1,4 @@
-# SiliconFly + FlyGym measured performance
+# Thongpari Fly Neuron Sim + FlyGym measured performance
 
 Measured on the user's Apple M2 Air (8 GB), 2026-09-12. These are observations,
 not targets or estimates.
@@ -19,11 +19,11 @@ not targets or estimates.
   in Swift; one latest command under a lock in Python.
 - The viewer/body pipeline can take about 30 seconds to prewarm on a cold launch.
   The server does not listen until this one-time JIT/graphics work is complete;
-  SiliconFly reconnects automatically meanwhile.
+  Thongpari Fly Neuron Sim reconnects automatically meanwhile.
 
 ## Simulation rates
 
-- Preserved standalone SiliconFly `--simtest`: 157 us per simulated ms for
+- Preserved standalone Thongpari Fly Neuron Sim `--simtest`: 157 us per simulated ms for
   16-step batches (about 6.4x realtime capacity); 416 us for 1-step batches.
 - Full `run_flygym.sh --flygym` after the Python body-loop pacing fix:
   observed Metal windows of 655, 433, and 363 us per simulated ms. All are
@@ -48,7 +48,7 @@ During the full viewer-enabled launch:
 
 ```text
 FlyGym bridge: 195216 KiB RSS, nice 15, about 62.5% CPU
-SiliconFly:    162816 KiB RSS, nice  0, about 10.0% CPU
+ThongpariFlyNeuronSim: 162816 KiB RSS, nice  0, about 10.0% CPU
 Combined:      358032 KiB RSS (about 350 MiB)
 ```
 

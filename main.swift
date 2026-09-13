@@ -1,4 +1,4 @@
-// SiliconFly — a 3D fruit fly that walks across your macOS desktop, driven by
+// Thongpari Fly Neuron Sim — a 3D fruit fly that walks across your macOS desktop, driven by
 // REAL FlyWire v783 connectome data: a live GPU (Metal) LIF simulation of the
 // WHOLE brain — 139,255 neurons, 15,091,983 signed edges — with the escape
 // circuit (LC4/LPLC2 -> DNp01 giant fiber), DNa01/02 steering, DNp09 walking
@@ -9,15 +9,15 @@
 //         window), Environment.swift (permission-free senses).
 //
 // Build:  ./build.sh
-// Run:    ./SiliconFly                     (menu-bar 🪰; brain window shows live spikes)
-//         ./SiliconFly --snapshot out.png  (offscreen fly model render)
-//         ./SiliconFly --brainshot out.png (offscreen brain window render)
-//         ./SiliconFly --simtest           (headless circuit test + GPU benchmark)
-//         ./SiliconFly --behaviortest      (end-to-end sim -> body checks)
-//         ./SiliconFly --flygym             (stream BrainSignals to a FlyGym body)
-//         ./SiliconFly --bridgetest          (bridge serialization/mapping checks)
-//         ./SiliconFly --gpucheck          (GPU sim vs an independent CPU reference)
-//         ./SiliconFly --brainstats [s]    (resting-regime diagnostics: rates by class/role)
+// Run:    ./ThongpariFlyNeuronSim                     (menu-bar 🪰; brain window shows live spikes)
+//         ./ThongpariFlyNeuronSim --snapshot out.png  (offscreen fly model render)
+//         ./ThongpariFlyNeuronSim --brainshot out.png (offscreen brain window render)
+//         ./ThongpariFlyNeuronSim --simtest           (headless circuit test + GPU benchmark)
+//         ./ThongpariFlyNeuronSim --behaviortest      (end-to-end sim -> body checks)
+//         ./ThongpariFlyNeuronSim --flygym            (stream BrainSignals to a FlyGym body)
+//         ./ThongpariFlyNeuronSim --bridgetest        (bridge serialization/mapping checks)
+//         ./ThongpariFlyNeuronSim --gpucheck          (GPU sim vs an independent CPU reference)
+//         ./ThongpariFlyNeuronSim --brainstats [s]    (resting-regime diagnostics: rates by class/role)
 //         --seed N                          (pin the sim seed; N decimal or 0x hex)
 
 import Cocoa

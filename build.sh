@@ -1,7 +1,7 @@
 #!/bin/zsh
-# Build SiliconFly
+# Build Thongpari Fly Neuron Sim
 cd "$(dirname "$0")"
-swiftc -O -swift-version 5 -o SiliconFly main.swift FlyModel.swift FlyGymBridge.swift LabProtocol.swift LabGraphView.swift ExperimentRecorder.swift LabWindow.swift \
+swiftc -O -swift-version 5 -o ThongpariFlyNeuronSim main.swift FlyModel.swift FlyGymBridge.swift LabProtocol.swift LabGraphView.swift ExperimentRecorder.swift LabWindow.swift \
     Sim.swift MetalSim.swift GPUCheck.swift Diagnostics.swift BrainView.swift Environment.swift \
     -framework Cocoa -framework SceneKit -framework Metal || exit 1
-echo "Built ./SiliconFly"
+echo "Built ./ThongpariFlyNeuronSim"

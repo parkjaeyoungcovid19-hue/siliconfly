@@ -204,4 +204,4 @@ V3 is complete only when:
 - UI explanations make the modeling boundary obvious to a non-expert;
 - recording contains the new sensory values and events;
 - all V2 tests plus new V3 tests pass;
-- `SiliconFly 실험실.command` still launches the full lab normally.
+- `Thongpari Fly Neuron Sim 실험실.command` still launches the full lab normally.

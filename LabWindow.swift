@@ -78,7 +78,7 @@ final class LabWindowController: NSWindowController, NSWindowDelegate {
         let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 920, height: 760),
                          styleMask: [.titled, .closable, .miniaturizable, .resizable],
                          backing: .buffered, defer: false)
-        w.title = "SiliconFly — Virtual Fly Lab V2"
+        w.title = "Thongpari Fly Neuron Sim — Virtual Fly Lab V2"
         w.minSize = NSSize(width: 760, height: 600)
         super.init(window: w)
         w.delegate = self
@@ -491,7 +491,7 @@ final class LabWindowController: NSWindowController, NSWindowDelegate {
         recorderLabel.lineBreakMode = .byTruncatingMiddle
         return page([
             section("Record an experiment",
-                    help: "Saves metadata, event markers, and telemetry under Documents/SiliconFlyExperiments. Start recording before the baseline if you want a complete trial.",
+                    help: "Saves metadata, event markers, and telemetry under Documents/ThongpariFlyNeuronSimExperiments. Start recording before the baseline if you want a complete trial.",
                     views: [
                         row([button("Start recording", #selector(startRecording)), button("Stop & save", #selector(stopRecording))]),
                         recorderLabel

@@ -1,5 +1,5 @@
 #!/bin/zsh
-# One-script launch: venv bridge (mock or real) + SiliconFly --flygym.
+# One-script launch: venv bridge (mock or real) + Thongpari Fly Neuron Sim --flygym.
 # Usage: ./run_flygym.sh [--mock|--flygym]   (default: --flygym)
 cd "$(dirname "$0")"
 MODE="${1:---flygym}"
@@ -18,4 +18,4 @@ BRIDGE_PID=$!
 cleanup() { kill $BRIDGE_PID 2>/dev/null; }
 trap cleanup EXIT INT TERM
 sleep 2
-./SiliconFly --flygym
+./ThongpariFlyNeuronSim --flygym

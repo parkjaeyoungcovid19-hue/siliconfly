@@ -1,4 +1,4 @@
-// GPUCheck.swift — `./SiliconFly --gpucheck`: an independent CPU reference for
+// GPUCheck.swift — `./ThongpariFlyNeuronSim --gpucheck`: an independent CPU reference for
 // the Metal whole-brain sim, compared to it step by step.
 //
 // `RefSim` is written from the ORIGINAL 668-neuron CPU sim (`git show

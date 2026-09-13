@@ -1,6 +1,6 @@
-# SiliconFly Virtual Fly Lab 사용 가이드
+# Thongpari Fly Neuron Sim — Virtual Fly Lab 사용 가이드
 
-현재 Virtual Fly Lab V2의 **권장 실행 방법은 저장소 루트의 `SiliconFly 실험실.command`를 Finder에서 더블클릭하는 것**이다. 이 런처는 실제 FlyGym/MuJoCo bridge와 `SiliconFly --flygym`을 함께 띄우며, `--flygym` 실행에서는 Virtual Fly Lab 창도 자동으로 열린다.
+현재 Virtual Fly Lab V2의 **권장 실행 방법은 저장소 루트의 `Thongpari Fly Neuron Sim 실험실.command`를 Finder에서 더블클릭하는 것**이다. 이 런처는 실제 FlyGym/MuJoCo bridge와 `ThongpariFlyNeuronSim --flygym`을 함께 띄우며, `--flygym` 실행에서는 Virtual Fly Lab 창도 자동으로 열린다.
 
 Lab은 개입을 세 종류로 구분한다.
 
@@ -17,10 +17,10 @@ Lab은 개입을 세 종류로 구분한다.
 가장 먼저 쓸 런처:
 
 ```text
-SiliconFly 실험실.command
+Thongpari Fly Neuron Sim 실험실.command
 ```
 
-더블클릭하면 실제 FlyGym/MuJoCo body, whole-brain Metal simulation, Lab UI/telemetry/recording이 함께 시작된다. 열린 Terminal 창은 실험이 끝날 때까지 유지한다. 첫 실제 viewer 실행은 JIT/그래픽 준비 때문에 bridge 연결이 늦을 수 있으며 SiliconFly는 연결을 재시도한다.
+더블클릭하면 실제 FlyGym/MuJoCo body, whole-brain Metal simulation, Lab UI/telemetry/recording이 함께 시작된다. 열린 Terminal 창은 실험이 끝날 때까지 유지한다. 첫 실제 viewer 실행은 JIT/그래픽 준비 때문에 bridge 연결이 늦을 수 있으며 앱은 연결을 재시도한다.
 
 CLI로 같은 구성을 띄우려면:
 
@@ -151,7 +151,7 @@ UI는 약 10 Hz로 scalar telemetry snapshot을 받아 다섯 graph를 표시한
 `Start recording`을 누르면 다음 폴더가 생긴다.
 
 ```text
-~/Documents/SiliconFlyExperiments/experiment-YYYYMMDD-HHMMSS/
+~/Documents/ThongpariFlyNeuronSimExperiments/experiment-YYYYMMDD-HHMMSS/
   metadata.json
   events.jsonl
   telemetry.csv
@@ -207,7 +207,7 @@ python3 flygym_bridge/validate_experiment_presets.py
 Swift Lab protocol/population mapping만 socket 없이 검사:
 
 ```sh
-./SiliconFly --labtest
+./ThongpariFlyNeuronSim --labtest
 ```
 
 실제 TCP lab lane, ack/state/event를 bridge와 함께 검사하려면 첫 Terminal에서 bridge를 띄운다.
@@ -219,7 +219,7 @@ Swift Lab protocol/population mapping만 socket 없이 검사:
 두 번째 Terminal:
 
 ```sh
-./SiliconFly --labloop
+./ThongpariFlyNeuronSim --labloop
 ```
 
 `--labloop`는 sphere spawn, wind, eye flash, touch, lab_event 수신, body/world reset까지 실제 TCP 경로로 확인하며 mock 또는 real bridge에서 동작한다.

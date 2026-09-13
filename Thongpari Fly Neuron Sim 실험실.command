@@ -3,7 +3,7 @@
 set -u
 cd "$(dirname "$0")"
 
-echo "🧪 SiliconFly Virtual Fly Lab 시작"
+echo "🧪 Thongpari Fly Neuron Sim Virtual Fly Lab 시작"
 echo "- FlyGym / MuJoCo 3D body"
 echo "- Whole-brain Metal simulation"
 echo "- Lab controls / telemetry / recording"

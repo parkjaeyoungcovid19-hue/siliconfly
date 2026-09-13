@@ -3,7 +3,7 @@
 set -u
 cd "$(dirname "$0")"
 
-echo "🪰 SiliconFly + FlyGym 실행 중..."
+echo "🪰 Thongpari Fly Neuron Sim + FlyGym 실행 중..."
 echo "- MuJoCo/FlyGym 실제 몸"
 echo "- 양안 시각 looming → LC4/LPLC2"
 echo "- Metal whole-brain sim"

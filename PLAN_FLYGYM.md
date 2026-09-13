@@ -1,4 +1,4 @@
-# PLAN_FLYGYM — SiliconFly closed-loop with FlyGym 2.x
+# PLAN_FLYGYM — Thongpari Fly Neuron Sim closed-loop with FlyGym 2.x
 
 ## 0. Existing architecture (audited)
 
@@ -11,7 +11,7 @@
 ## 1. Strategy
 
 - Keep Metal brain authoritative at 1 kHz. Never duplicate connectome in Python. Never send 139k states.
-- New runtime mode `./SiliconFly --flygym`. Normal `./SiliconFly` unchanged. Existing diagnostics must keep passing.
+- Runtime mode `./ThongpariFlyNeuronSim --flygym`. Existing diagnostics must keep passing.
 - Bridge: localhost TCP 127.0.0.1:17841, newline-delimited compact JSON, Swift = client, Python = server. Brain->body at ~50-100 Hz from render loop via background queue; body->brain compact feedback parsed on background thread, applied centrally. Bounded queues, never block Metal/render.
 - V1 control: DN-derived high-level drives -> existing FlyGym locomotion controller/CPG (NOT direct 42-joint control). Mappings that are engineering approximations live in ONE Python module (`flygym_bridge/neural_decoder.py`) and ONE Swift mapping (`FlyGymBridge.swift` `FlyGymSensoryMap`), clearly commented.
 - Feedback V1: vx, yaw_rate, 6 leg contacts, left/right aggregate -> existing `gaitDrive/gaitPhase/airPuff` + `stimulate(ascend/sens)` paths. No new fake populations.

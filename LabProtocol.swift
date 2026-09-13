@@ -572,7 +572,7 @@ func runLabTest() {
         let metadata = (try? String(contentsOfFile: recordingPath + "/metadata.json", encoding: .utf8)) ?? ""
         let telemetry = (try? String(contentsOfFile: recordingPath + "/telemetry.csv", encoding: .utf8)) ?? ""
         let events = (try? String(contentsOfFile: recordingPath + "/events.jsonl", encoding: .utf8)) ?? ""
-        check("recorder writes V2 metadata", metadata.contains("SiliconFly Virtual Fly Lab V2"))
+        check("recorder writes V2 metadata", metadata.contains("Thongpari Fly Neuron Sim Virtual Fly Lab V2"))
         check("recorder flushes V2 telemetry on stop",
               telemetry.contains("odor_drive_l") && telemetry.contains("nearest_food_mm")
               && telemetry.contains("receptor_odor_l_hz")

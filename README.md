@@ -1,4 +1,4 @@
-# SiliconFly V2
+# Thongpari Fly Neuron Sim
 
 <p align="center">
   <strong>A connectome-driven virtual fruit-fly laboratory for macOS.</strong><br>
@@ -16,7 +16,13 @@
   <img src="docs/images/neuromechfly-v2.jpg" width="900" alt="NeuroMechFly v2 simulated fruit fly navigating an obstacle environment">
 </p>
 
-SiliconFly V2 turns the original SiliconFly desktop fly into an interactive **virtual fly lab**. The brain side runs the shipped FlyWire v783 connectome as a 139,255-neuron spiking network on the GPU. The body side runs a real NeuroMechFly v2 model in FlyGym / MuJoCo. A bidirectional bridge connects neural outputs to locomotion and sends measured body, vision, contact and environmental state back into the neural simulation.
+<p align="center">
+  <img src="docs/images/thongpari-fly-neuron-sim-gui.png" width="900" alt="Actual Thongpari Fly Neuron Sim Virtual Fly Lab V2 GUI">
+</p>
+
+<p align="center"><sub>Actual Virtual Fly Lab V2 GUI running on macOS; the documentation capture uses the mock bridge for stable telemetry.</sub></p>
+
+**Thongpari Fly Neuron Sim** turns the original SiliconFly desktop fly into an interactive **virtual fly lab**. The brain side runs the shipped FlyWire v783 connectome as a 139,255-neuron spiking network on the GPU. The body side runs a real NeuroMechFly v2 model in FlyGym / MuJoCo. A bidirectional bridge connects neural outputs to locomotion and sends measured body, vision, contact and environmental state back into the neural simulation.
 
 The goal is not to fake convincing animal behavior. V2 is built so that you can see where a response came from: **source → modeled sensor → receptor activity → brain output → controller → measured motion**.
 
@@ -128,8 +134,8 @@ V2 exposes three modes:
 ### 1. Clone and build
 
 ```sh
-git clone https://github.com/parkjaeyoungcovid19-hue/siliconfly.git
-cd siliconfly
+git clone https://github.com/parkjaeyoungcovid19-hue/thongpari-fly-neuron-sim.git
+cd thongpari-fly-neuron-sim
 ./build.sh
 ```
 
@@ -147,7 +153,7 @@ If your Python 3.12 lives somewhere else, use that interpreter instead.
 From Finder, the recommended entry point is:
 
 ```text
-SiliconFly 실험실.command
+Thongpari Fly Neuron Sim 실험실.command
 ```
 
 CLI equivalent:
@@ -156,7 +162,7 @@ CLI equivalent:
 ./run_flygym.sh --flygym
 ```
 
-The launcher starts the Python bridge, the real FlyGym / MuJoCo backend, SiliconFly and the Lab window. A cold FlyGym viewer launch can take a while to prewarm; SiliconFly keeps retrying the connection while the backend initializes.
+The launcher starts the Python bridge, the real FlyGym / MuJoCo backend, Thongpari Fly Neuron Sim and the Lab window. A cold FlyGym viewer launch can take a while to prewarm; the app keeps retrying the connection while the backend initializes.
 
 For development without the real body:
 
@@ -171,7 +177,7 @@ For development without the real body:
 The Lab can record trials under:
 
 ```text
-~/Documents/SiliconFlyExperiments/experiment-YYYYMMDD-HHMMSS/
+~/Documents/ThongpariFlyNeuronSimExperiments/experiment-YYYYMMDD-HHMMSS/
 ├── metadata.json
 ├── events.jsonl
 └── telemetry.csv
@@ -187,10 +193,10 @@ The current V2 tree has been exercised through the full Swift and Python regress
 
 ```sh
 ./build.sh
-./SiliconFly --labtest
-./SiliconFly --bridgetest
-./SiliconFly --simtest
-./SiliconFly --behaviortest
+./ThongpariFlyNeuronSim --labtest
+./ThongpariFlyNeuronSim --bridgetest
+./ThongpariFlyNeuronSim --simtest
+./ThongpariFlyNeuronSim --behaviortest
 
 ./flygym-venv/bin/python flygym_bridge/test_bridge.py
 ./flygym-venv/bin/python flygym_bridge/test_lab.py
@@ -206,7 +212,7 @@ These measurements are machine-specific observations, not a guaranteed benchmark
 
 ## What is measured, what is modeled
 
-SiliconFly V2 combines real data, simulation and explicit engineering mappings. Those are not interchangeable.
+Thongpari Fly Neuron Sim combines real data, simulation and explicit engineering mappings. Those are not interchangeable.
 
 **Directly grounded in existing data / runtime state**
 
@@ -256,7 +262,7 @@ For detailed controls and exact preset values, see **[VIRTUAL_FLY_LAB_GUIDE.md](
 
 ## Upstream work and credits
 
-This repository started from **[SiliconFly](https://github.com/dawsonamf/siliconfly)** by Dawson Metzger-Fleetwood, which itself credits **[DesktopFly](https://github.com/DenisSergeevitch/desktop-fly)** by Denis Shiryaev for the original desktop fly / overlay foundation.
+This repository started from **[SiliconFly](https://github.com/dawsonamf/siliconfly)** by Dawson Metzger-Fleetwood, which itself credits **[DesktopFly](https://github.com/DenisSergeevitch/desktop-fly)** by Denis Shiryaev for the original desktop fly / overlay foundation. **Thongpari Fly Neuron Sim** is the current project name for this V2 closed-loop lab branch.
 
 V2 additionally integrates:
 
