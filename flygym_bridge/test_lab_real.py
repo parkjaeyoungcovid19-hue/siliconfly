@@ -34,6 +34,66 @@ try:
     world = body.lab_world
     check("real LabWorld bound", world.state()["physical_backend"] is True)
 
+    # V4 deterministic quantum contract: the real backend must declare its
+    # native physics timestep, 20 ms must be an exact integer number of those
+    # substeps, and step_exact must advance only simulation time (not fake wall
+    # time). This is the primitive the request-driven lockstep scheduler uses.
+    native_dt = body.physics_timestep_s
+    quantum_s = 0.020
+    exact_substeps = int(round(quantum_s / native_dt))
+    check("real backend declares exact native physics timestep",
+          native_dt > 0.0 and abs(native_dt - float(body.sim.timestep)) < 1e-15 and
+          abs(exact_substeps * native_dt - quantum_s) < 1e-12,
+          f"dt={native_dt:.9f}s substeps={exact_substeps}")
+    exact_start = body.t
+    exact_obs = body.step_exact(LocomotorCommand(forward=0.0), exact_substeps)
+    check("real V4 20 ms exact step has no wall-derived duration",
+          abs((exact_obs.t - exact_start) - quantum_s) < 1e-12 and
+          abs(exact_obs.sim_dt - quantum_s) < 1e-12 and exact_obs.wall_dt == 0.0 and
+          exact_obs.sim_wall_ratio == 0.0,
+          f"advance={exact_obs.t-exact_start:.9f}s sim_dt={exact_obs.sim_dt:.9f} "
+          f"wall_dt={exact_obs.wall_dt:.9f}")
+
+    capacity = world.state()["slot_capacity"]
+    check("expanded runtime object capacity",
+          capacity.get("box", 0) >= 64 and capacity.get("sphere", 0) >= 64 and
+          capacity.get("wall", 0) >= 64 and capacity.get("food", 0) >= 32,
+          repr(capacity))
+
+    # The old real topology exhausted at 8 box/sphere/wall and 4 food objects.
+    # Activate more than those old limits for every shape against the compiled
+    # MuJoCo model, then release them again so later vision/odor tests stay clean.
+    stress_ids = []
+    stress_shapes = (("box", 12), ("sphere", 12), ("wall", 12), ("food", 8))
+    for shape, count in stress_shapes:
+        for i in range(count):
+            object_id = f"capacity_{shape}_{i}"
+            x = -350.0 - 40.0 * (0 if shape == "box" else 1 if shape == "sphere" else 2 if shape == "wall" else 3)
+            y = -120.0 + i * 12.0
+            z = 5.0 if shape in ("box", "sphere") else (7.5 if shape == "wall" else 1.5)
+            size = ([4.0, 4.0, 4.0] if shape == "box" else
+                    [4.0, 4.0, 4.0] if shape == "sphere" else
+                    [2.0, 12.0, 10.0] if shape == "wall" else
+                    [2.0, 2.0, 2.0])
+            world.spawn_object(shape=shape, object_id=object_id,
+                               position_mm=[x, y, z], size_mm=size)
+            stress_ids.append(object_id)
+    stress_state = world.state()
+    check("real slots exceed former per-shape limits",
+          sum(1 for o in stress_state["objects"] if o["id"].startswith("capacity_box_")) == 12 and
+          sum(1 for o in stress_state["objects"] if o["id"].startswith("capacity_sphere_")) == 12 and
+          sum(1 for o in stress_state["objects"] if o["id"].startswith("capacity_wall_")) == 12 and
+          sum(1 for o in stress_state["objects"] if o["id"].startswith("capacity_food_")) == 8,
+          f"objects={len(stress_state['objects'])} free={stress_state['slot_free']}")
+    last_stress = world.objects[stress_ids[-1]]
+    _, stress_gid, stress_mocap = world._slot_ids[last_stress.slot]
+    check("expanded slot is physically active in MuJoCo",
+          float(body.sim.mj_model.geom_rgba[stress_gid, 3]) > 0.9 and
+          np.allclose(body.sim.mj_data.mocap_pos[stress_mocap], last_stress.position_mm),
+          f"slot={last_stress.slot}")
+    for object_id in stress_ids:
+        world.remove_object(object_id)
+
     initial = world.objects.get("obstacle_box")
     check("initial ArenaConfig obstacle exists", initial is not None)
     if initial is not None:
@@ -53,6 +113,21 @@ try:
     body.apply_lab_command(LabCommand(
         1, "spawn_sphere", {"id": "ball", "position_mm": [20, 5, 3], "size_mm": 4}))
     check("runtime sphere spawn", any(o["id"] == "ball" for o in body.lab_state()["objects"]))
+    body.apply_lab_command(LabCommand(
+        101, "spawn_box", {"id": "runtime_box", "position_mm": [24, -8, 4], "size_mm": [6, 6, 6]}))
+    body.apply_lab_command(LabCommand(
+        102, "spawn_wall", {"id": "runtime_wall", "position_mm": [30, 10, 7.5], "size_mm": [2, 18, 15]}))
+    spawned = {o["id"]: o for o in body.lab_state()["objects"]}
+    check("runtime box spawn", spawned.get("runtime_box", {}).get("shape") == "box")
+    check("runtime wall spawn", spawned.get("runtime_wall", {}).get("shape") == "wall")
+    for object_id in ("runtime_box", "runtime_wall"):
+        obj = world.objects[object_id]
+        _, gid, mocap_id = world._slot_ids[obj.slot]
+        actual_pos = list(body.sim.mj_data.mocap_pos[mocap_id])
+        check(f"{object_id} physical geom active",
+              float(body.sim.mj_model.geom_rgba[gid, 3]) > 0.9 and
+              all(abs(a - b) < 1e-9 for a, b in zip(actual_pos, obj.position_mm)),
+              f"rgba={body.sim.mj_model.geom_rgba[gid].tolist()} pos={actual_pos}")
     # Place food relative to the *actual* current thorax pose rather than the
     # nominal spawn origin. This exercises the complete RealFlyBody -> LabWorld
     # odor observation path even if warmup has shifted/rotated the fly slightly.
@@ -92,6 +167,13 @@ try:
     check("real body heading telemetry is finite",
           math.isfinite(obs.heading_rad) and -math.pi <= obs.heading_rad <= math.pi,
           f"heading={obs.heading_rad}")
+    thorax_now = np.asarray(body._thorax_position(), dtype=float)
+    check("real body packet exposes absolute fly X/Y for arena map",
+          math.isfinite(obs.position_x_mm) and math.isfinite(obs.position_y_mm) and
+          abs(obs.position_x_mm - thorax_now[0]) < 1e-9 and
+          abs(obs.position_y_mm - thorax_now[1]) < 1e-9,
+          f"packet=({obs.position_x_mm:.3f},{obs.position_y_mm:.3f}) "
+          f"thorax=({thorax_now[0]:.3f},{thorax_now[1]:.3f})")
     body.apply_lab_command(LabCommand(12, "delete_object", {"id": "food"}))
     no_food_obs = body.step(LocomotorCommand(forward=0.0), 0.01)
     check("removing real food clears odor telemetry",

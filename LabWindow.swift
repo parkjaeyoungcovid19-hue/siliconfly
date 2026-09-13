@@ -1,9 +1,221 @@
-// LabWindow.swift — AppKit Virtual Fly Lab V2 control/telemetry window.
+// LabWindow.swift — AppKit Virtual Fly Lab V4 control/telemetry window.
 
 import Cocoa
 
 private final class LabFlippedView: NSView {
     override var isFlipped: Bool { true }
+}
+
+private final class LabArenaPlacementView: NSView {
+    var onPick: ((Double, Double) -> Void)?
+    var selectedShape: String = "box" { didSet { needsDisplay = true } }
+    var selectedPoint: (x: Double, y: Double)? { didSet { needsDisplay = true } }
+    var worldObjects: [LabWorldObjectRemote] = [] { didSet { needsDisplay = true } }
+    var flyPose: (x: Double, y: Double, heading: Double)? { didSet { needsDisplay = true } }
+
+    private let minimumExtentMm = 100.0
+
+    override var intrinsicContentSize: NSSize { NSSize(width: 720, height: 360) }
+
+    private func visibleExtentMm() -> Double {
+        var required = minimumExtentMm
+        func include(_ x: Double, _ y: Double, pad: Double = 0) {
+            required = max(required, abs(x) + pad, abs(y) + pad)
+        }
+        if let selectedPoint { include(selectedPoint.x, selectedPoint.y, pad: 8) }
+        if let flyPose { include(flyPose.x, flyPose.y, pad: 8) }
+        for obj in worldObjects {
+            let sx = obj.sizeMM.indices.contains(0) ? abs(obj.sizeMM[0]) : 5
+            let sy = obj.sizeMM.indices.contains(1) ? abs(obj.sizeMM[1]) : sx
+            include(obj.positionMM.indices.contains(0) ? obj.positionMM[0] : 0,
+                    obj.positionMM.indices.contains(1) ? obj.positionMM[1] : 0,
+                    pad: max(sx, sy) * 0.75 + 5)
+        }
+        let padded = required * 1.10
+        for candidate in [100.0, 150, 200, 300, 500, 750, 1000, 1500, 2000] where padded <= candidate {
+            return candidate
+        }
+        return ceil(padded / 500.0) * 500.0
+    }
+
+    private func plotGeometry() -> (extent: Double, scale: Double, rect: NSRect) {
+        let extent = visibleExtentMm()
+        let side = max(1.0, min(bounds.width, bounds.height) - 16.0)
+        let rect = NSRect(x: bounds.midX - side / 2, y: bounds.midY - side / 2,
+                          width: side, height: side)
+        return (extent, Double(side) / (2.0 * extent), rect)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        let g = plotGeometry()
+        guard g.scale > 0, g.rect.contains(p) else { return }
+        // Top-down lab convention: screen up = +X (forward), screen left = +Y.
+        let x = max(-g.extent, min(g.extent, Double(p.y - g.rect.midY) / g.scale))
+        let y = max(-g.extent, min(g.extent, Double(g.rect.midX - p.x) / g.scale))
+        selectedPoint = (x, y)
+        onPick?(x, y)
+    }
+
+    private func point(x: Double, y: Double, geometry g: (extent: Double, scale: Double, rect: NSRect)) -> CGPoint {
+        CGPoint(x: g.rect.midX - CGFloat(y * g.scale),
+                y: g.rect.midY + CGFloat(x * g.scale))
+    }
+
+    private func objectPath(_ obj: LabWorldObjectRemote,
+                            geometry g: (extent: Double, scale: Double, rect: NSRect)) -> NSBezierPath {
+        let x = obj.positionMM.indices.contains(0) ? obj.positionMM[0] : 0
+        let y = obj.positionMM.indices.contains(1) ? obj.positionMM[1] : 0
+        let sx = max(0.2, obj.sizeMM.indices.contains(0) ? abs(obj.sizeMM[0]) : 5)
+        let sy = max(0.2, obj.sizeMM.indices.contains(1) ? abs(obj.sizeMM[1]) : sx)
+        if obj.shape == "sphere" || obj.shape == "food" {
+            let c = point(x: x, y: y, geometry: g)
+            let d = max(2.0, CGFloat(sx * g.scale))
+            return NSBezierPath(ovalIn: NSRect(x: c.x - d / 2, y: c.y - d / 2, width: d, height: d))
+        }
+
+        let hx = sx * 0.5
+        let hy = sy * 0.5
+        let yaw = obj.yawDeg * Double.pi / 180.0
+        let c = cos(yaw), sn = sin(yaw)
+        let corners = [(-hx, -hy), (-hx, hy), (hx, hy), (hx, -hy)].map { local -> CGPoint in
+            let wx = x + local.0 * c - local.1 * sn
+            let wy = y + local.0 * sn + local.1 * c
+            return point(x: wx, y: wy, geometry: g)
+        }
+        let path = NSBezierPath()
+        if let first = corners.first {
+            path.move(to: first)
+            for p in corners.dropFirst() { path.line(to: p) }
+            path.close()
+        }
+        return path
+    }
+
+    private func drawWorldObjects(geometry g: (extent: Double, scale: Double, rect: NSRect),
+                                  labelAttrs: [NSAttributedString.Key: Any]) {
+        for obj in worldObjects {
+            let path = objectPath(obj, geometry: g)
+            let color: NSColor
+            switch obj.shape {
+            case "food": color = .systemGreen
+            case "wall": color = .systemPurple
+            case "sphere": color = .systemPink
+            default: color = .systemIndigo
+            }
+            color.withAlphaComponent(0.22).setFill()
+            color.withAlphaComponent(0.95).setStroke()
+            path.lineWidth = obj.shape == "wall" ? 2.0 : 1.4
+            path.fill(); path.stroke()
+
+            let x = obj.positionMM.indices.contains(0) ? obj.positionMM[0] : 0
+            let y = obj.positionMM.indices.contains(1) ? obj.positionMM[1] : 0
+            let c = point(x: x, y: y, geometry: g)
+            let label = "\(obj.id) · \(obj.shape)"
+            (label as NSString).draw(at: CGPoint(x: min(bounds.maxX - 140, c.x + 5),
+                                                 y: min(bounds.maxY - 15, c.y + 4)),
+                                     withAttributes: labelAttrs)
+        }
+    }
+
+    private func drawFly(geometry g: (extent: Double, scale: Double, rect: NSRect),
+                         labelAttrs: [NSAttributedString.Key: Any]) {
+        guard let flyPose else { return }
+        let center = point(x: flyPose.x, y: flyPose.y, geometry: g)
+        // Keep the fly legible even when the arena auto-zooms far out. Position
+        // and heading are authoritative; marker pixel size is intentionally UI-sized.
+        let length = max(10.0, min(18.0, CGFloat(4.0 * g.scale)))
+        let worldForward = point(x: flyPose.x + cos(flyPose.heading) * 5.0,
+                                 y: flyPose.y + sin(flyPose.heading) * 5.0,
+                                 geometry: g)
+        let dx = worldForward.x - center.x, dy = worldForward.y - center.y
+        let mag = max(0.001, hypot(dx, dy))
+        let ux = dx / mag, uy = dy / mag
+        let px = -uy, py = ux
+        let tip = CGPoint(x: center.x + ux * length * 0.65, y: center.y + uy * length * 0.65)
+        let tail = CGPoint(x: center.x - ux * length * 0.45, y: center.y - uy * length * 0.45)
+        let left = CGPoint(x: tail.x + px * length * 0.35, y: tail.y + py * length * 0.35)
+        let right = CGPoint(x: tail.x - px * length * 0.35, y: tail.y - py * length * 0.35)
+        let path = NSBezierPath()
+        path.move(to: tip); path.line(to: left); path.line(to: right); path.close()
+        NSColor.systemGreen.withAlphaComponent(0.90).setFill()
+        NSColor.systemGreen.setStroke()
+        path.lineWidth = 1.5
+        path.fill(); path.stroke()
+        let text = String(format: "fly  %.1f, %.1f", flyPose.x, flyPose.y)
+        (text as NSString).draw(at: CGPoint(x: min(bounds.maxX - 120, center.x + 8),
+                                            y: max(4, center.y - 16)),
+                                withAttributes: labelAttrs)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        NSColor.controlBackgroundColor.setFill()
+        NSBezierPath(roundedRect: bounds, xRadius: 8, yRadius: 8).fill()
+
+        let g = plotGeometry()
+        NSColor.windowBackgroundColor.withAlphaComponent(0.45).setFill()
+        NSBezierPath(roundedRect: g.rect, xRadius: 6, yRadius: 6).fill()
+
+        let grid = NSBezierPath()
+        let step: Double = g.extent <= 100 ? 25 : (g.extent <= 200 ? 50 : (g.extent <= 500 ? 100 : (g.extent <= 1000 ? 250 : 500)))
+        var v = -g.extent
+        while v <= g.extent + 0.001 {
+            let a = point(x: -g.extent, y: v, geometry: g)
+            let b = point(x: g.extent, y: v, geometry: g)
+            grid.move(to: a); grid.line(to: b)
+            let c = point(x: v, y: -g.extent, geometry: g)
+            let d = point(x: v, y: g.extent, geometry: g)
+            grid.move(to: c); grid.line(to: d)
+            v += step
+        }
+        NSColor.separatorColor.withAlphaComponent(0.35).setStroke()
+        grid.lineWidth = 0.7
+        grid.stroke()
+
+        let origin = point(x: 0, y: 0, geometry: g)
+        let axes = NSBezierPath()
+        axes.move(to: CGPoint(x: g.rect.minX, y: origin.y)); axes.line(to: CGPoint(x: g.rect.maxX, y: origin.y))
+        axes.move(to: CGPoint(x: origin.x, y: g.rect.minY)); axes.line(to: CGPoint(x: origin.x, y: g.rect.maxY))
+        NSColor.secondaryLabelColor.withAlphaComponent(0.65).setStroke()
+        axes.lineWidth = 1.2
+        axes.stroke()
+
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 10, weight: .medium),
+            .foregroundColor: NSColor.secondaryLabelColor
+        ]
+        let objectAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 9, weight: .medium),
+            .foregroundColor: NSColor.labelColor.withAlphaComponent(0.85)
+        ]
+        ("+X forward" as NSString).draw(at: CGPoint(x: origin.x + 7, y: g.rect.maxY - 16), withAttributes: attrs)
+        ("+Y left" as NSString).draw(at: CGPoint(x: g.rect.minX + 6, y: origin.y + 5), withAttributes: attrs)
+        (String(format: "±%.0f mm · %d objects", g.extent, worldObjects.count) as NSString)
+            .draw(at: CGPoint(x: g.rect.maxX - 120, y: g.rect.minY + 5), withAttributes: attrs)
+
+        drawWorldObjects(geometry: g, labelAttrs: objectAttrs)
+        drawFly(geometry: g, labelAttrs: objectAttrs)
+
+        guard let selectedPoint else { return }
+        let p = point(x: selectedPoint.x, y: selectedPoint.y, geometry: g)
+        let markerRect = NSRect(x: p.x - 7, y: p.y - 7, width: 14, height: 14)
+        NSColor.systemOrange.setStroke()
+        NSColor.systemOrange.withAlphaComponent(0.18).setFill()
+        let marker: NSBezierPath
+        if selectedShape == "sphere" || selectedShape == "food" {
+            marker = NSBezierPath(ovalIn: markerRect)
+        } else {
+            marker = NSBezierPath(rect: markerRect)
+        }
+        marker.lineWidth = 2
+        marker.fill(); marker.stroke()
+
+        let coordinate = String(format: "pick %.1f, %.1f mm", selectedPoint.x, selectedPoint.y)
+        (coordinate as NSString).draw(at: CGPoint(x: min(bounds.maxX - 120, p.x + 10),
+                                                  y: max(4, min(bounds.maxY - 16, p.y + 7))),
+                                        withAttributes: attrs)
+    }
 }
 
 final class LabWindowController: NSWindowController, NSWindowDelegate {
@@ -18,9 +230,10 @@ final class LabWindowController: NSWindowController, NSWindowDelegate {
     private let freshnessLabel = NSTextField(labelWithString: "Packets — waiting for body/environment telemetry…")
     private let commandDiagnosticsLabel = NSTextField(wrappingLabelWithString: "Commands — no command sent yet")
     private let signalPathLabel = NSTextField(wrappingLabelWithString: "Signal path — waiting for telemetry…")
+    private let sessionStatusLabel = NSTextField(wrappingLabelWithString: "Session — interactive")
     private let temperatureModeStatusLabel = NSTextField(wrappingLabelWithString: "Neural input: OFF — environment-only temperature is recorded without neural input.")
 
-    private let objectID = NSTextField(string: "stimulus")
+    private let objectID = NSTextField(string: "")
     private let objectShape = NSPopUpButton(frame: .zero, pullsDown: false)
     private let objectX = NSTextField(string: "60")
     private let objectY = NSTextField(string: "0")
@@ -28,6 +241,14 @@ final class LabWindowController: NSWindowController, NSWindowDelegate {
     private let objectSize = NSTextField(string: "5")
     private let objectSpeed = NSTextField(string: "12")
     private let objectEndDistance = NSTextField(string: "8")
+    private let worldObjectStatusLabel = NSTextField(wrappingLabelWithString: "Object status — ready")
+    private let worldCapacityLabel = NSTextField(wrappingLabelWithString: "Object capacity — waiting for backend…")
+    private let arenaPlacement = LabArenaPlacementView(frame: .zero)
+    private let createOnArenaClick = NSButton(checkboxWithTitle: "Create selected object when clicking arena", target: nil, action: nil)
+    private var autoObjectSerial: [String: Int] = [:]
+    private var lastAutoObjectID: String?
+    private var lastObjectCommandID: Int?
+    private var lastObjectCommandDescription = ""
 
     private let windStrength = NSTextField(string: "0.7")
     private let windDuration = NSTextField(string: "500")
@@ -71,6 +292,8 @@ final class LabWindowController: NSWindowController, NSWindowDelegate {
     private var eyeCommandCovered: Bool?
     private var lastCommandID: Int?
     private var lastCommandAction = "none"
+    private var lastRecordedAckKey = ""
+    private var pendingCommandSchedules: [Int: LabCommandSchedule] = [:]
 
     init(coordinator: Coordinator, bridge: FlyGymBridge?) {
         self.coordinator = coordinator
@@ -78,11 +301,19 @@ final class LabWindowController: NSWindowController, NSWindowDelegate {
         let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 920, height: 760),
                          styleMask: [.titled, .closable, .miniaturizable, .resizable],
                          backing: .buffered, defer: false)
-        w.title = "Thongpari Fly Neuron Sim — Virtual Fly Lab V2"
+        w.title = "Thongpari Fly Neuron Sim — Virtual Fly Lab V4"
         w.minSize = NSSize(width: 760, height: 600)
         super.init(window: w)
         w.delegate = self
         buildUI()
+        arenaPlacement.onPick = { [weak self] x, y in
+            guard let self else { return }
+            self.objectX.stringValue = String(format: "%.1f", x)
+            self.objectY.stringValue = String(format: "%.1f", y)
+            self.worldObjectStatusLabel.stringValue = String(format: "Object status — picked X %.1f · Y %.1f mm", x, y)
+            self.worldObjectStatusLabel.textColor = .secondaryLabelColor
+            if self.createOnArenaClick.state == .on { self.createObject() }
+        }
         timer = Timer.scheduledTimer(withTimeInterval: 0.10, repeats: true) { [weak self] _ in
             self?.refresh()
         }
@@ -126,11 +357,19 @@ final class LabWindowController: NSWindowController, NSWindowDelegate {
         intro.textColor = .secondaryLabelColor
         intro.maximumNumberOfLines = 2
 
-        let statusStack = NSStackView(views: [protocolLabel, freshnessLabel, remoteStateLabel])
+        let quitButton = button("Quit Lab", #selector(quitLab))
+        quitButton.toolTip = "Quit Thongpari Fly Neuron Sim. When launched by the lab launcher, its FlyGym bridge process is stopped too."
+        let topStatusRow = NSStackView(views: [protocolLabel, NSView(), quitButton])
+        topStatusRow.orientation = .horizontal
+        topStatusRow.alignment = .centerY
+        topStatusRow.spacing = 8
+        topStatusRow.distribution = .fill
+        let statusStack = NSStackView(views: [topStatusRow, freshnessLabel, remoteStateLabel])
         statusStack.orientation = .vertical
         statusStack.alignment = .leading
         statusStack.spacing = 3
         statusStack.edgeInsets = NSEdgeInsets(top: 4, left: 2, bottom: 6, right: 2)
+        topStatusRow.widthAnchor.constraint(equalTo: statusStack.widthAnchor).isActive = true
 
         let tabs = NSTabViewController()
         tabs.tabStyle = .toolbar
@@ -295,6 +534,13 @@ final class LabWindowController: NSWindowController, NSWindowDelegate {
 
     private func worldPage() -> NSViewController {
         _ = field(objectID, width: 120)
+        objectID.placeholderString = "auto name"
+        worldObjectStatusLabel.font = NSFont.systemFont(ofSize: 11.5, weight: .medium)
+        worldObjectStatusLabel.textColor = .secondaryLabelColor
+        worldObjectStatusLabel.maximumNumberOfLines = 2
+        worldCapacityLabel.font = NSFont.monospacedSystemFont(ofSize: 10.5, weight: .regular)
+        worldCapacityLabel.textColor = .secondaryLabelColor
+        worldCapacityLabel.maximumNumberOfLines = 2
         [objectX, objectY, objectZ, objectSize, objectSpeed, objectEndDistance].forEach { _ = field($0) }
         addPopupItems(objectShape, [
             ("Box", "box"),
@@ -302,17 +548,28 @@ final class LabWindowController: NSWindowController, NSWindowDelegate {
             ("Wall", "wall"),
             ("Food / odor source", "food")
         ])
+        objectShape.target = self
+        objectShape.action = #selector(objectShapeChanged)
+        createOnArenaClick.state = .on
+        arenaPlacement.translatesAutoresizingMaskIntoConstraints = false
+        arenaPlacement.heightAnchor.constraint(equalToConstant: 360).isActive = true
+        arenaPlacement.widthAnchor.constraint(greaterThanOrEqualToConstant: 700).isActive = true
+        arenaPlacement.selectedShape = selectedValue(objectShape, fallback: "box")
+        arenaPlacement.selectedPoint = (d(objectX), d(objectY))
         return page([
-            section("Create or edit an object", kind: .physical,
-                    help: "Position uses millimetres: X = forward/back, Y = left/right, Z = height. Give each object a short name so you can move or remove it later.",
+            section("Click to place an object", kind: .physical,
+                    help: "Choose a type first, then click the top-down arena. Authoritative backend objects are drawn at their real X/Y footprint and the green fly marker follows the live MuJoCo position/heading. Up is +X forward and left is +Y. The view auto-zooms to keep placed objects and the fly visible. With the checkbox on, one click creates the selected object; turn it off to pick coordinates only.",
                     views: [
-                        row([label("Type"), objectShape, label("Name"), objectID]),
+                        row([label("Type"), objectShape, label("Name"), objectID, createOnArenaClick]),
+                        arenaPlacement,
                         row([label("X (mm)"), objectX, label("Y (mm)"), objectY,
                              label("Z (mm)"), objectZ, label("Size (mm)"), objectSize]),
-                        row([button("Create", #selector(createObject)),
+                        row([button("Create at current coordinates", #selector(createObject)),
                              button("Update position", #selector(moveObject)),
                              button("Update size", #selector(resizeObject)),
-                             button("Remove", #selector(deleteObject))])
+                             button("Remove", #selector(deleteObject))]),
+                        worldObjectStatusLabel,
+                        worldCapacityLabel
                     ]),
             section("Move an object toward the fly", kind: .physical,
                     help: "This moves the selected object only. The fly is never commanded to approach or escape; any response comes from the model.",
@@ -463,7 +720,7 @@ final class LabWindowController: NSWindowController, NSWindowDelegate {
         }
         return page([
             section("Signal path — find where a response stops",
-                    help: "Read top to bottom. Each line uses only telemetry the current V2 runtime actually exposes; missing stages are labeled instead of guessed.",
+                    help: "Read top to bottom. Each line uses only telemetry the current V4 runtime actually exposes; missing stages are labeled instead of guessed.",
                     views: [signalPathLabel, commandDiagnosticsLabel]),
             section("Brain activity",
                     help: "Spike-rate summaries in Hz. ‘walk’, ‘back’, and ‘groom’ are DN population readouts; a higher line means that population is currently more active, not that a behavior is guaranteed.",
@@ -491,7 +748,17 @@ final class LabWindowController: NSWindowController, NSWindowDelegate {
         recorderLabel.font = NSFont.systemFont(ofSize: 11, weight: .regular)
         recorderLabel.textColor = .secondaryLabelColor
         recorderLabel.lineBreakMode = .byTruncatingMiddle
+        sessionStatusLabel.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .medium)
+        sessionStatusLabel.textColor = .labelColor
         return page([
+            section("V4 experiment time",
+                    help: "Interactive keeps the responsive V3 behavior. Deterministic starts a new tick-zero brain/body session: 1 ms neural ticks, one exact 20 ms FlyGym quantum at a time, independent of display FPS. Desktop cursor/window timing is excluded from deterministic neural input.",
+                    views: [
+                        sessionStatusLabel,
+                        row([button("Start deterministic session", #selector(startDeterministicSession)),
+                             button("Pause session", #selector(pauseSession)),
+                             button("Resume session", #selector(resumeSession))])
+                    ]),
             section("Record an experiment",
                     help: "Saves metadata, event markers, and telemetry under Documents/ThongpariFlyNeuronSimExperiments. Start recording before the baseline if you want a complete trial.",
                     views: [
@@ -536,6 +803,45 @@ final class LabWindowController: NSWindowController, NSWindowDelegate {
     private func ms(_ f: NSTextField, fallback: Int) -> Int { max(1, min(60_000, f.integerValue == 0 ? fallback : f.integerValue)) }
     private var target: String { objectID.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "stimulus" : objectID.stringValue }
 
+    private func creationTarget(for shape: String) -> String {
+        let typed = objectID.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !typed.isEmpty && typed != lastAutoObjectID {
+            lastAutoObjectID = nil
+            return typed
+        }
+        let next = (autoObjectSerial[shape] ?? 0) + 1
+        autoObjectSerial[shape] = next
+        let generated = "\(shape)_\(next)"
+        lastAutoObjectID = generated
+        objectID.stringValue = generated
+        return generated
+    }
+
+    @objc private func objectShapeChanged() {
+        let shape = selectedValue(objectShape, fallback: "box")
+        arenaPlacement.selectedShape = shape
+        // If the previous name was auto-generated, switching shape should not
+        // make the new object inherit the old shape's ID.
+        if objectID.stringValue == lastAutoObjectID {
+            objectID.stringValue = ""
+            lastAutoObjectID = nil
+        }
+        switch shape {
+        case "wall":
+            if d(objectSize, fallback: 5) <= 5.01 { objectSize.stringValue = "20" }
+            if d(objectZ, fallback: 5) <= 5.01 { objectZ.stringValue = "7.5" }
+        case "food":
+            objectSize.stringValue = "3"
+            objectZ.stringValue = "1.5"
+        case "sphere":
+            objectSize.stringValue = "5"
+            objectZ.stringValue = "3"
+        default:
+            objectSize.stringValue = "5"
+            objectZ.stringValue = "5"
+        }
+    }
+
     private func setEyeButtonsEnabled(_ enabled: Bool) {
         eyeButtons.forEach { $0.isEnabled = enabled }
     }
@@ -566,6 +872,10 @@ final class LabWindowController: NSWindowController, NSWindowDelegate {
         updateTemperatureModeStatus()
     }
 
+    @objc private func quitLab() {
+        NSApp.terminate(nil)
+    }
+
     @discardableResult
     private func send(_ action: String, target: String? = nil,
                       x: Double? = nil, y: Double? = nil, z: Double? = nil,
@@ -579,20 +889,36 @@ final class LabWindowController: NSWindowController, NSWindowDelegate {
             protocolLabel.stringValue = "FlyGym bridge — disabled (launch with --flygym for physical-world controls)"
             return nil
         }
+        let schedule = coordinator.labCommandSchedule()
         let id = bridge.sendLab(action: action, target: target, x: x, y: y, z: z,
                                 size: size, speed: speed, strength: strength,
                                 durationMs: durationMs, value: value,
                                 directionDeg: directionDeg, endDistance: endDistance,
                                 physical: physical, sensory: sensory,
-                                continuous: continuous, mode: mode)
+                                continuous: continuous, mode: mode,
+                                protocolVersion: schedule == nil ? nil : FlyGymProtocolV4.version,
+                                sessionID: schedule?.sessionID, epoch: schedule?.epoch,
+                                requestedTick: schedule?.requestedTick)
         lastCommandID = id
         lastCommandAction = action
-        recorder.mark(kind: "lab_command", detail: "\(action) target=\(target ?? "-")", commandID: id)
+        if let schedule {
+            pendingCommandSchedules[id] = schedule
+            if pendingCommandSchedules.count > 256,
+               let oldest = pendingCommandSchedules.keys.min() {
+                pendingCommandSchedules.removeValue(forKey: oldest)
+            }
+        }
+        let session = coordinator.sessionSnapshot()
+        recorder.mark(kind: "lab_command", detail: "\(action) target=\(target ?? "-")", commandID: id,
+                      sessionID: schedule?.sessionID ?? session.sessionID,
+                      epoch: schedule?.epoch ?? session.epoch,
+                      simTick: session.simTick, requestedTick: schedule?.requestedTick)
         return id
     }
 
     @objc private func createObject() {
         let shape = selectedValue(objectShape, fallback: "box")
+        let objectTarget = creationTarget(for: shape)
         let action: String
         switch shape {
         case "sphere": action = "spawn_sphere"
@@ -600,8 +926,16 @@ final class LabWindowController: NSWindowController, NSWindowDelegate {
         case "food": action = "spawn_food"
         default: action = "spawn_box"
         }
-        send(action, target: target, x: d(objectX), y: d(objectY), z: d(objectZ),
-             size: max(0.1, d(objectSize, fallback: 5)))
+        if let id = send(action, target: objectTarget, x: d(objectX), y: d(objectY), z: d(objectZ),
+                         size: max(0.1, d(objectSize, fallback: 5))) {
+            lastObjectCommandID = id
+            lastObjectCommandDescription = "create \(shape) ‘\(objectTarget)’"
+            worldObjectStatusLabel.stringValue = "Object status — sending \(lastObjectCommandDescription)…"
+            worldObjectStatusLabel.textColor = .secondaryLabelColor
+        } else {
+            worldObjectStatusLabel.stringValue = "Object status — bridge unavailable; object was not sent"
+            worldObjectStatusLabel.textColor = .systemOrange
+        }
     }
     @objc private func moveObject() { send("move_object", target: target, x: d(objectX), y: d(objectY), z: d(objectZ)) }
     @objc private func resizeObject() { send("resize_object", target: target, size: max(0.1, d(objectSize, fallback: 5))) }
@@ -612,26 +946,36 @@ final class LabWindowController: NSWindowController, NSWindowDelegate {
              endDistance: max(0.5, d(objectEndDistance, fallback: 8)))
     }
     @objc private func resetWorld() {
-        coordinator.labResetModeledStimuli()
         clearEyePending()
         temperature.stringValue = "25"
         selectPopupValue(temperatureMode, "environment_only")
         updateTemperatureModeStatus()
-        send("reset_world")
+        if !coordinator.requestDeterministicReset(scopes: ["world", "modeled"]) {
+            coordinator.labResetModeledStimuli()
+            send("reset_world")
+        }
         recorder.mark(kind: "reset", detail: "world+modeled environment")
     }
-    @objc private func resetBody() { send("reset_body"); recorder.mark(kind: "reset", detail: "body") }
-    @objc private func resetBrain() { coordinator.labResetBrain(); recorder.mark(kind: "reset", detail: "brain") }
+    @objc private func resetBody() {
+        if !coordinator.requestDeterministicReset(scopes: ["body"]) { send("reset_body") }
+        recorder.mark(kind: "reset", detail: "body")
+    }
+    @objc private func resetBrain() {
+        if !coordinator.requestDeterministicReset(scopes: ["brain"]) { coordinator.labResetBrain() }
+        recorder.mark(kind: "reset", detail: "brain")
+    }
     @objc private func resetAll() {
-        coordinator.labResetBrain()
-        coordinator.labResetModeledStimuli()
         clearEyePending()
         temperature.stringValue = "25"
         selectPopupValue(temperatureMode, "environment_only")
         updateTemperatureModeStatus()
-        send("reset_world")
-        send("reset_body")
-        send("restore_eyes")
+        if !coordinator.requestDeterministicReset(scopes: ["brain", "body", "world", "modeled"]) {
+            coordinator.labResetBrain()
+            coordinator.labResetModeledStimuli()
+            send("reset_world")
+            send("reset_body")
+            send("restore_eyes")
+        }
         neuralGraph.clear(); sensoryGraph.clear(); flywireSensoryGraph.clear(); bodyGraph.clear(); visionGraph.clear()
         commandGraph.clear()
         recorder.mark(kind: "reset", detail: "all")
@@ -726,8 +1070,15 @@ final class LabWindowController: NSWindowController, NSWindowDelegate {
         let role = selectedValue(brainRole, fallback: "GF")
         let strength = Float(max(0, min(2, d(brainStrength, fallback: 0.3))))
         let duration = ms(brainDuration, fallback: 300)
+        let schedule = coordinator.labCommandSchedule()
+        let session = coordinator.sessionSnapshot()
         coordinator.labStimulatePopulation(role, strength: strength, durationMs: duration)
-        recorder.mark(kind: "direct_neural", detail: "role=\(role) strength=\(strength) duration_ms=\(duration)")
+        recorder.mark(kind: "direct_neural", detail: "role=\(role) strength=\(strength) duration_ms=\(duration)",
+                      sessionID: session.sessionID, epoch: session.epoch, simTick: session.simTick,
+                      requestedTick: schedule?.requestedTick,
+                      appliedTick: schedule?.requestedTick,
+                      appliedEpoch: schedule?.epoch,
+                      status: schedule == nil ? nil : "scheduled_local_boundary")
     }
 
     private func runPreset(_ name: String) {
@@ -735,18 +1086,15 @@ final class LabWindowController: NSWindowController, NSWindowDelegate {
         recorder.mark(kind: "preset", detail: name)
         switch name {
         case "frontal_loom", "left_loom", "right_loom", "left_eye_covered_loom":
+            if coordinator.requestDeterministicReset(
+                scopes: ["brain", "body", "world", "modeled"],
+                after: { [weak self] in self?.runLoomPresetAfterReset(name) }) {
+                return
+            }
             coordinator.labResetBrain()
             coordinator.labResetModeledStimuli()
-            clearEyePending()
-            temperature.stringValue = "25"
-            selectPopupValue(temperatureMode, "environment_only")
-            updateTemperatureModeStatus()
             send("reset_world"); send("reset_body")
-            if name == "left_eye_covered_loom" { eye("left", covered: true) }
-            let y: Double = name == "left_loom" ? 22 : (name == "right_loom" ? -22 : 0)
-            let id = "preset_loom"
-            send("spawn_box", target: id, x: 60, y: y, z: 5, size: 10)
-            send("approach_object", target: id, speed: 80, endDistance: 8)
+            runLoomPresetAfterReset(name)
         case "wind_puff":
             windStrength.stringValue = "0.7"; windDirection.stringValue = "0"; windDuration.stringValue = "500"
             windPhysical.state = .on; windSensory.state = .on; windContinuous.state = .off
@@ -765,9 +1113,38 @@ final class LabWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func presetStim(role: String, strength: Float, duration: Int) {
+        if coordinator.requestDeterministicReset(
+            scopes: ["brain"],
+            after: { [weak self] in
+                guard let self else { return }
+                self.coordinator.labStimulatePopulation(role, strength: strength, durationMs: duration)
+                let s = self.coordinator.sessionSnapshot()
+                let schedule = self.coordinator.labCommandSchedule()
+                self.recorder.mark(kind: "direct_neural",
+                                   detail: "preset role=\(role) strength=\(strength) duration_ms=\(duration)",
+                                   sessionID: s.sessionID, epoch: s.epoch, simTick: s.simTick,
+                                   requestedTick: schedule?.requestedTick,
+                                   appliedTick: schedule?.requestedTick,
+                                   appliedEpoch: schedule?.epoch,
+                                   status: "scheduled_local_boundary")
+            }) {
+            return
+        }
         coordinator.labResetBrain()
         coordinator.labStimulatePopulation(role, strength: strength, durationMs: duration)
         recorder.mark(kind: "direct_neural", detail: "preset role=\(role) strength=\(strength) duration_ms=\(duration)")
+    }
+
+    private func runLoomPresetAfterReset(_ name: String) {
+        clearEyePending()
+        temperature.stringValue = "25"
+        selectPopupValue(temperatureMode, "environment_only")
+        updateTemperatureModeStatus()
+        if name == "left_eye_covered_loom" { eye("left", covered: true) }
+        let y: Double = name == "left_loom" ? 22 : (name == "right_loom" ? -22 : 0)
+        let id = "preset_loom"
+        send("spawn_box", target: id, x: 60, y: y, z: 5, size: 10)
+        send("approach_object", target: id, speed: 80, endDistance: 8)
     }
 
     @objc private func presetFrontalLoom() { runPreset("frontal_loom") }
@@ -799,8 +1176,53 @@ final class LabWindowController: NSWindowController, NSWindowDelegate {
             recorderLabel.stringValue = "stopping… previous recording is still being flushed"
             return
         }
-        if let p = recorder.start() { recorderLabel.stringValue = "recording: \(p)" }
+        let session = coordinator.sessionSnapshot()
+        var metadata: [String: Any] = [
+            "protocol_version": FlyGymProtocolV4.version,
+            "session_id": session.sessionID,
+            "session_mode": session.mode.rawValue,
+            "initial_epoch": session.epoch,
+            "initial_sim_tick": session.simTick,
+            "neural_tick_ms": 1,
+            "experiment_quantum_ticks": session.quantumTicks,
+            "experiment_quantum_ms": session.quantumTicks,
+        ]
+        if let hello = bridge?.serverHello() {
+            metadata["backend_physics_timestep_s"] = hello.physicsTimestepS as Any
+            metadata["backend_capabilities"] = hello.capabilities
+            metadata["backend_supported_quantum_ticks"] = hello.supportedQuantumTicks
+        }
+        if let p = recorder.start(metadata: metadata) { recorderLabel.stringValue = "recording: \(p)" }
         else { recorderLabel.stringValue = "recording failed — \(recorder.lastErrorMessage ?? "see stderr")" }
+    }
+
+    @objc private func startDeterministicSession() {
+        if let error = coordinator.startDeterministicSession() {
+            sessionStatusLabel.stringValue = "Session — deterministic unavailable: \(error)"
+            sessionStatusLabel.textColor = .systemOrange
+            return
+        }
+        let s = coordinator.sessionSnapshot()
+        sessionStatusLabel.textColor = .labelColor
+        recorder.mark(kind: "session_begin", detail: "deterministic V4",
+                      sessionID: s.sessionID, epoch: s.epoch, simTick: s.simTick,
+                      status: s.phase.rawValue)
+    }
+
+    @objc private func pauseSession() {
+        let before = coordinator.sessionSnapshot()
+        coordinator.requestSessionPause()
+        recorder.mark(kind: "pause_requested", detail: before.mode.rawValue,
+                      sessionID: before.sessionID, epoch: before.epoch, simTick: before.simTick,
+                      status: before.phase.rawValue)
+    }
+
+    @objc private func resumeSession() {
+        let before = coordinator.sessionSnapshot()
+        coordinator.requestSessionResume()
+        recorder.mark(kind: "resume_requested", detail: before.mode.rawValue,
+                      sessionID: before.sessionID, epoch: before.epoch, simTick: before.simTick,
+                      status: before.phase.rawValue)
     }
     @objc private func stopRecording() {
         let p = recorder.path ?? ""
@@ -890,6 +1312,7 @@ final class LabWindowController: NSWindowController, NSWindowDelegate {
     private func refresh() {
         let now = Date()
         let t = coordinator.labTelemetry()
+        let session = coordinator.sessionSnapshot()
         var state: LabRemoteState?
         var ack: LabAck?
         var event: LabEventNotice?
@@ -898,6 +1321,56 @@ final class LabWindowController: NSWindowController, NSWindowDelegate {
             state = bridge.latestLabState()
             ack = bridge.latestLabAck()
             event = bridge.latestLabEvent()
+
+            if let objects = state?.authoritativeObjects {
+                arenaPlacement.worldObjects = objects
+            }
+            if let body = bridge.latestBody(maxAge: 3600.0) {
+                arenaPlacement.flyPose = (body.positionXmm, body.positionYmm, body.headingRad)
+            } else {
+                arenaPlacement.flyPose = nil
+            }
+            if let capacity = state?.authoritativeSlotCapacity {
+                let free = state?.authoritativeSlotFree ?? [:]
+                let order = ["box", "sphere", "wall", "food"]
+                let parts = order.compactMap { shape -> String? in
+                    guard let total = capacity[shape] else { return nil }
+                    let remain = free[shape] ?? max(0, total - (state?.authoritativeObjects?.filter { $0.shape == shape }.count ?? 0))
+                    return "\(shape) \(total - remain)/\(total)"
+                }
+                worldCapacityLabel.stringValue = "Object capacity — " + parts.joined(separator: " · ")
+            }
+            coordinator.noteLabAck(ack)
+            if let ack {
+                let key = "\(ack.id):\(ack.status ?? ""):\(ack.appliedEpoch ?? -1):\(ack.appliedTick ?? -1):\(ack.ok)"
+                if key != lastRecordedAckKey {
+                    lastRecordedAckKey = key
+                    let s = coordinator.sessionSnapshot()
+                    let request = pendingCommandSchedules[ack.id]
+                    recorder.mark(kind: "lab_command_result",
+                                  detail: "\(ack.action.isEmpty ? lastCommandAction : ack.action) \(ack.ok ? "OK" : "ERR") \(ack.message)",
+                                  commandID: ack.id,
+                                  sessionID: ack.sessionID ?? s.sessionID,
+                                  epoch: ack.epoch ?? s.epoch,
+                                  simTick: ack.simTick ?? s.simTick,
+                                  requestedTick: request?.requestedTick,
+                                  appliedTick: ack.appliedTick,
+                                  appliedEpoch: ack.appliedEpoch,
+                                  status: ack.status ?? (ack.ok ? "applied" : "rejected"))
+                    pendingCommandSchedules.removeValue(forKey: ack.id)
+                }
+                if ack.id == lastObjectCommandID {
+                    if ack.ok {
+                        let tick = ack.appliedTick.map { " at tick \($0)" } ?? ""
+                        worldObjectStatusLabel.stringValue = "Object status — OK · \(lastObjectCommandDescription)\(tick)"
+                        worldObjectStatusLabel.textColor = .systemGreen
+                    } else {
+                        let message = ack.message.isEmpty ? "command rejected" : ack.message
+                        worldObjectStatusLabel.stringValue = "Object status — ERROR · \(message)"
+                        worldObjectStatusLabel.textColor = .systemRed
+                    }
+                }
+            }
 
             if eyeCommandPendingID != nil {
                 let stateFresh = bridge.labStateFreshness().isFresh
@@ -917,6 +1390,11 @@ final class LabWindowController: NSWindowController, NSWindowDelegate {
                 }
             }
         }
+
+        let sessionError = session.lastError.map { " · ERROR \($0)" } ?? ""
+        let bodyTick = session.lastBodyResultTick.map(String.init) ?? "—"
+        sessionStatusLabel.stringValue = "Session — \(session.mode.rawValue.uppercased()) · \(session.phase.rawValue) · epoch \(session.epoch) · tick \(session.simTick) ms · body result \(bodyTick)\(sessionError)"
+        sessionStatusLabel.textColor = session.phase == .failed ? .systemRed : .labelColor
 
         if window?.isVisible == true {
             neuralGraph.append([t.ratePop, t.rateLoom, t.rateFwd, t.rateMDN, t.rateGroom])

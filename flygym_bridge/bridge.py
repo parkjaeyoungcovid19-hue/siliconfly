@@ -4,16 +4,19 @@
 """
 from __future__ import annotations
 import argparse
+import math
 import socket
 import sys
 import threading
 import time
 import os
-from collections import deque
+from collections import OrderedDict, deque
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from protocol import (
     decode_line, encode, BrainPacket, BodyPacket, LabCommand, LabStatePacket, LabEventPacket,
-    LabCommandQueue,
+    LabCommandQueue, HelloPacket, SessionControlPacket, SessionStatePacket,
+    ExperimentStepPacket, ExperimentStepResultPacket,
+    V4_EXPERIMENT_QUANTUM_TICKS, V4_PROTOCOL_VERSION,
 )
 from neural_decoder import decode, LocomotorCommand
 
@@ -33,6 +36,21 @@ class Bridge:
         self.lock = threading.Lock()
         self.lab_commands = LabCommandQueue()
         self.pending_lab_responses = deque(maxlen=128)
+        self.pending_session_controls = deque()
+        self.pending_experiment_steps = deque()
+        self.session_control_cap = 32
+        self.experiment_step_cap = 1
+        self.client_hello = None
+        self.session_id = ""
+        self.session_epoch = 0
+        self.session_tick = 0
+        self.session_mode = "interactive"
+        self.session_paused = False
+        self.last_step_seq = -1
+        self.recent_step_results = OrderedDict()
+        self.recent_command_results = OrderedDict()
+        self.deferred_lab_commands = []
+        self.recent_result_cap = 128
         self.brain_count = 0
         self.body_count = 0
         self.lab_count = 0
@@ -57,13 +75,79 @@ class Bridge:
                 self.brain_count += 1
                 self.last_cmd = decode(pkt)
                 self.last_brain_mono = time.monotonic()
+        elif isinstance(pkt, HelloPacket):
+            with self.lock:
+                self.client_hello = pkt
+        elif isinstance(pkt, SessionControlPacket):
+            with self.lock:
+                if len(self.pending_session_controls) >= self.session_control_cap:
+                    response = self._session_state_packet(
+                        pkt, ok=False, state="error", error="session control queue full")
+                    self.pending_lab_responses.append(response)
+                else:
+                    self.pending_session_controls.append(pkt)
+        elif isinstance(pkt, ExperimentStepPacket):
+            with self.lock:
+                if len(self.pending_experiment_steps) >= self.experiment_step_cap:
+                    self.pending_lab_responses.append(ExperimentStepResultPacket(
+                        session_id=pkt.session_id, epoch=pkt.epoch, seq=pkt.seq,
+                        sim_tick=pkt.sim_tick, end_sim_tick=pkt.sim_tick,
+                        ok=False, error="experiment step queue full"))
+                else:
+                    self.pending_experiment_steps.append(pkt)
         elif isinstance(pkt, LabCommand):
             self.lab_count += 1
             if not self.lab_commands.push(pkt):
                 self.lab_rejected += 1
                 self._queue_lab_response(LabStatePacket(
                     ack=pkt.seq, ok=False, error="lab command queue full",
-                    state={"last_action": pkt.op}))
+                    state={"last_action": pkt.op}, status="queue_full"))
+
+    def _body_physics_timestep(self):
+        try:
+            dt = float(getattr(self.body, "physics_timestep_s"))
+        except (AttributeError, TypeError, ValueError, OverflowError):
+            return None
+        return dt if math.isfinite(dt) and dt > 0.0 else None
+
+    def _exact_substeps_for_ticks(self, ticks):
+        dt = self._body_physics_timestep()
+        if dt is None:
+            return None
+        duration = int(ticks) / 1000.0
+        raw = duration / dt
+        n = int(round(raw))
+        if n <= 0 or abs(n * dt - duration) > max(1e-12, dt * 1e-9):
+            return None
+        max_steps = getattr(self.body, "max_physics_substeps", None)
+        if max_steps is not None and n > int(max_steps):
+            return None
+        return n
+
+    def _hello_packet(self):
+        quantum_ok = self._exact_substeps_for_ticks(V4_EXPERIMENT_QUANTUM_TICKS) is not None
+        return HelloPacket(
+            role="python",
+            physics_timestep_s=self._body_physics_timestep(),
+            supported_quantum_ticks=([V4_EXPERIMENT_QUANTUM_TICKS] if quantum_ok else []),
+        )
+
+    def _session_state_packet(self, request=None, *, ok=True, state=None, error=None):
+        return SessionStatePacket(
+            session_id=(request.session_id if request is not None else self.session_id),
+            epoch=(request.epoch if request is not None else max(1, self.session_epoch)),
+            seq=(request.seq if request is not None else 0),
+            sim_tick=self.session_tick,
+            mode=self.session_mode,
+            state=state or ("paused" if self.session_paused else "running"),
+            ok=ok, error=error,
+        )
+
+    def _remember(self, cache, key, value):
+        cache[key] = value
+        cache.move_to_end(key)
+        while len(cache) > self.recent_result_cap:
+            cache.popitem(last=False)
 
     def _queue_lab_response(self, packet):
         with self.lock:
@@ -88,7 +172,8 @@ class Bridge:
             return LocomotorCommand(), 1.0, age_s, True
         return cmd, tempo, age_s, False
 
-    def _lab_state(self, *, ack=None, ok=True, error=None, last_action=None):
+    def _lab_state(self, *, ack=None, ok=True, error=None, last_action=None,
+                   applied_tick=None, applied_epoch=None, status=None):
         state_fn = getattr(self.body, "lab_state", None)
         state = state_fn() if state_fn is not None else {}
         state = dict(state or {})
@@ -105,27 +190,256 @@ class Bridge:
             state["last_action"] = last_action
         elif self.last_lab_action:
             state["last_action"] = self.last_lab_action
-        return LabStatePacket(ack=ack, ok=ok, error=error, state=state)
+        return LabStatePacket(ack=ack, ok=ok, error=error, state=state,
+                              applied_tick=applied_tick, applied_epoch=applied_epoch,
+                              status=status,
+                              session_id=(self.session_id or None),
+                              epoch=(self.session_epoch if self.session_epoch > 0 else None),
+                              sim_tick=(self.session_tick if self.session_id else None))
 
-    def _apply_lab_commands(self):
+    def _apply_lab_commands(self, *, applied_tick=None, applied_epoch=None):
         apply_fn = getattr(self.body, "apply_lab_command", None)
         if apply_fn is None:
             return
         # Limit discrete work per body tick; continuous slots are always drained
         # as latest state. Remaining discrete FIFO entries stay bounded in queue.
-        for command in self.lab_commands.drain(max_discrete=32):
+        commands = self.deferred_lab_commands + self.lab_commands.drain(max_discrete=32)
+        self.deferred_lab_commands = []
+        commands.sort(key=lambda command: command.seq)
+        for command in commands:
+            v4 = command.session_id is not None or command.epoch is not None or command.protocol_version is not None
+            if v4 and applied_tick is not None and command.requested_tick is not None and command.requested_tick > applied_tick:
+                if len(self.deferred_lab_commands) < 128:
+                    self.deferred_lab_commands.append(command)
+                else:
+                    self.lab_rejected += 1
+                    self._queue_lab_response(self._lab_state(
+                        ack=command.seq, ok=False, error="future command queue full",
+                        last_action=command.op, status="queue_full"))
+                continue
+            key = None
+            if v4:
+                key = (command.session_id or "", int(command.epoch or 0), int(command.seq))
+                cached = self.recent_command_results.get(key)
+                if cached is not None:
+                    self._queue_lab_response(cached)
+                    continue
+                if command.protocol_version is not None and command.protocol_version < V4_PROTOCOL_VERSION:
+                    response = self._lab_state(
+                        ack=command.seq, ok=False, error="unsupported protocol version",
+                        last_action=command.op, status="rejected_protocol")
+                    self.lab_rejected += 1
+                    self._remember(self.recent_command_results, key, response)
+                    self._queue_lab_response(response)
+                    continue
+                if not self.session_id or command.session_id != self.session_id:
+                    response = self._lab_state(
+                        ack=command.seq, ok=False, error="wrong session",
+                        last_action=command.op, status="rejected_session")
+                    self.lab_rejected += 1
+                    self._remember(self.recent_command_results, key, response)
+                    self._queue_lab_response(response)
+                    continue
+                if command.epoch != self.session_epoch:
+                    response = self._lab_state(
+                        ack=command.seq, ok=False, error="wrong epoch",
+                        last_action=command.op, status="rejected_old_epoch")
+                    self.lab_rejected += 1
+                    self._remember(self.recent_command_results, key, response)
+                    self._queue_lab_response(response)
+                    continue
             try:
                 apply_fn(command)
                 self.lab_applied += 1
                 self.last_lab_action = command.op
-                self._queue_lab_response(self._lab_state(
-                    ack=command.seq, ok=True, last_action=command.op))
+                response = self._lab_state(
+                    ack=command.seq, ok=True, last_action=command.op,
+                    applied_tick=(applied_tick if v4 else None),
+                    applied_epoch=(applied_epoch if v4 else None),
+                    status=("applied" if v4 else None))
+                if key is not None:
+                    self._remember(self.recent_command_results, key, response)
+                self._queue_lab_response(response)
             except Exception as exc:
                 self.lab_rejected += 1
                 self.last_lab_action = command.op
-                self._queue_lab_response(self._lab_state(
+                response = self._lab_state(
                     ack=command.seq, ok=False, error=str(exc)[:512],
-                    last_action=command.op))
+                    last_action=command.op, status=("rejected" if v4 else None))
+                if key is not None:
+                    self._remember(self.recent_command_results, key, response)
+                self._queue_lab_response(response)
+
+    def _drain_session_controls(self):
+        with self.lock:
+            out = list(self.pending_session_controls)
+            self.pending_session_controls.clear()
+        return out
+
+    def _pop_experiment_step(self):
+        with self.lock:
+            return self.pending_experiment_steps.popleft() if self.pending_experiment_steps else None
+
+    def _process_session_controls(self):
+        for request in self._drain_session_controls():
+            if request.protocol_version < V4_PROTOCOL_VERSION:
+                self._queue_lab_response(self._session_state_packet(
+                    request, ok=False, state="error", error="unsupported protocol version"))
+                continue
+            if request.action == "begin":
+                if not request.session_id:
+                    self._queue_lab_response(self._session_state_packet(
+                        request, ok=False, state="error", error="missing session_id"))
+                    continue
+                with self.lock:
+                    client_hello = self.client_hello
+                if request.mode == "deterministic":
+                    if client_hello is None or not client_hello.supports_v4_deterministic(
+                            require_physics_timestep=False):
+                        self._queue_lab_response(self._session_state_packet(
+                            request, ok=False, state="error",
+                            error="deterministic capability not negotiated"))
+                        continue
+                    if self._exact_substeps_for_ticks(V4_EXPERIMENT_QUANTUM_TICKS) is None:
+                        self._queue_lab_response(self._session_state_packet(
+                            request, ok=False, state="error",
+                            error="20 ms quantum is not exact on this backend"))
+                        continue
+                    # A new deterministic session owns a fresh body timeline.
+                    # Reset body/controller time to tick zero while preserving
+                    # the current LabWorld contents; the new session id means
+                    # this is not an epoch increment inside an existing run.
+                    reset_body = getattr(self.body, "reset_body", None)
+                    if reset_body is None:
+                        self._queue_lab_response(self._session_state_packet(
+                            request, ok=False, state="error",
+                            error="backend cannot reset body for deterministic session"))
+                        continue
+                    reset_body()
+                    body_tick = int(round(float(getattr(self.body, "t", 0.0)) * 1000.0))
+                    if abs(body_tick - request.sim_tick) > 0:
+                        self._queue_lab_response(self._session_state_packet(
+                            request, ok=False, state="error",
+                            error=f"body tick {body_tick} does not match requested tick {request.sim_tick}"))
+                        continue
+                self.session_id = request.session_id
+                self.session_epoch = request.epoch
+                self.session_tick = request.sim_tick
+                self.session_mode = request.mode
+                self.session_paused = False
+                self.last_step_seq = -1
+                self.recent_step_results.clear()
+                self.recent_command_results.clear()
+                self.deferred_lab_commands = []
+                self._queue_lab_response(self._session_state_packet(request, state="running"))
+                continue
+
+            if request.session_id != self.session_id:
+                self._queue_lab_response(self._session_state_packet(
+                    request, ok=False, state="error", error="wrong session"))
+                continue
+            if request.action == "reset":
+                if request.epoch != self.session_epoch + 1:
+                    self._queue_lab_response(self._session_state_packet(
+                        request, ok=False, state="error",
+                        error=f"reset epoch {request.epoch} must follow {self.session_epoch}"))
+                    continue
+                if self.session_mode == "deterministic" and not self.session_paused:
+                    self._queue_lab_response(self._session_state_packet(
+                        request, ok=False, state="error",
+                        error="deterministic reset requires paused barrier"))
+                    continue
+                scopes = {str(v).lower() for v in request.reset_scope}
+                try:
+                    if "body" in scopes:
+                        reset_body = getattr(self.body, "reset_body", None)
+                        if reset_body is None:
+                            raise RuntimeError("backend cannot reset body")
+                        reset_body()
+                    if "world" in scopes:
+                        world = getattr(self.body, "lab_world", None)
+                        if world is None:
+                            raise RuntimeError("backend has no lab world")
+                        world.reset()
+                except Exception as exc:
+                    self._queue_lab_response(self._session_state_packet(
+                        request, ok=False, state="error",
+                        error=f"reset failed: {str(exc)[:400]}"))
+                    continue
+                self.session_epoch = request.epoch
+                self.session_tick = request.sim_tick
+                self.last_step_seq = -1
+                self.recent_step_results.clear()
+                self.recent_command_results.clear()
+                self.deferred_lab_commands = []
+                with self.lock:
+                    self.pending_experiment_steps.clear()
+                # A reset is itself a pause-boundary transaction. It does not
+                # implicitly resume; Swift resumes explicitly after both sides
+                # agree on the new epoch/tick.
+                self.session_paused = True
+                self._queue_lab_response(self._session_state_packet(request, state="paused"))
+                continue
+            if request.epoch != self.session_epoch:
+                self._queue_lab_response(self._session_state_packet(
+                    request, ok=False, state="error", error="wrong epoch"))
+                continue
+            if request.action == "pause":
+                self.session_paused = True
+                self._queue_lab_response(self._session_state_packet(request, state="paused"))
+            elif request.action == "resume":
+                self.session_paused = False
+                self._queue_lab_response(self._session_state_packet(request, state="running"))
+            else:
+                self._queue_lab_response(self._session_state_packet(
+                    request, ok=False, state="error", error="unsupported session action"))
+
+    def _process_experiment_step(self, request):
+        key = (request.session_id, request.epoch, request.seq)
+        cached = self.recent_step_results.get(key)
+        if cached is not None:
+            return cached
+        def reject(message):
+            result = ExperimentStepResultPacket(
+                session_id=request.session_id, epoch=request.epoch, seq=request.seq,
+                sim_tick=request.sim_tick, end_sim_tick=request.sim_tick,
+                ok=False, error=message)
+            self._remember(self.recent_step_results, key, result)
+            return result
+        if request.protocol_version < V4_PROTOCOL_VERSION:
+            return reject("unsupported protocol version")
+        if self.session_mode != "deterministic":
+            return reject("deterministic session not active")
+        if request.session_id != self.session_id:
+            return reject("wrong session")
+        if request.epoch != self.session_epoch:
+            return reject("wrong epoch")
+        if self.session_paused:
+            return reject("session paused")
+        if request.seq <= self.last_step_seq:
+            return reject("out-of-order step sequence")
+        if request.sim_tick != self.session_tick:
+            return reject(f"wrong sim_tick {request.sim_tick}, expected {self.session_tick}")
+        if request.quantum_ticks != V4_EXPERIMENT_QUANTUM_TICKS:
+            return reject("unsupported experiment quantum")
+        substeps = self._exact_substeps_for_ticks(request.quantum_ticks)
+        if substeps is None:
+            return reject("experiment quantum is not exact on backend timestep")
+        self._apply_lab_commands(applied_tick=request.sim_tick, applied_epoch=request.epoch)
+        cmd = decode(request.brain)
+        try:
+            obs = self.body.step_exact(cmd, substeps, tempo=request.brain.tempo)
+            self._collect_lab_events()
+        except Exception as exc:
+            return reject(f"body exact step failed: {str(exc)[:400]}")
+        end_tick = request.sim_tick + request.quantum_ticks
+        self.session_tick = end_tick
+        self.last_step_seq = request.seq
+        result = ExperimentStepResultPacket(
+            session_id=request.session_id, epoch=request.epoch, seq=request.seq,
+            sim_tick=request.sim_tick, end_sim_tick=end_tick, ok=True, body=obs)
+        self._remember(self.recent_step_results, key, result)
+        return result
 
     def _collect_lab_events(self):
         drain_fn = getattr(self.body, "drain_lab_events", None)
@@ -144,6 +458,18 @@ class Bridge:
         # packet slot.
         alive = threading.Event()
         alive.set()
+        # Capability negotiation is connection-local even though a logical V4
+        # session may outlive a transport reconnect. Never inherit a previous
+        # client's hello or an unprocessed transport packet.
+        with self.lock:
+            self.client_hello = None
+            self.pending_session_controls.clear()
+            self.pending_experiment_steps.clear()
+        try:
+            conn.sendall(encode(self._hello_packet()))
+        except OSError:
+            alive.clear()
+            return
         # Keep receive waits well below the 15 ms feedback period. A 50 ms
         # timeout capped feedback near 40 Hz whenever the client was quiet
         # between packets; 5 ms keeps the loop in the requested 50-100 Hz
@@ -205,6 +531,49 @@ class Bridge:
         smoke_wall_s = 0.0
         while self.running and alive.is_set():
             now_mono = time.monotonic()
+            # Session control always runs on the simulation-owner thread. In
+            # particular, resume must remain processable while body stepping is
+            # paused; pausing the receiver/owner thread itself would deadlock.
+            self._process_session_controls()
+
+            if self.session_mode == "deterministic":
+                step_request = None if self.session_paused else self._pop_experiment_step()
+                if step_request is not None:
+                    result = self._process_experiment_step(step_request)
+                    self._queue_lab_response(result)
+                    if result.ok:
+                        self.body_count += 1
+                        smoke_sim_s += float(getattr(result.body, "sim_dt", 0.0))
+                try:
+                    for response in self._drain_lab_responses():
+                        conn.sendall(encode(response))
+                    if now_mono >= next_lab_state:
+                        conn.sendall(encode(self._lab_state()))
+                        next_lab_state = now_mono + lab_state_period
+                except OSError:
+                    break
+                # One request advances exactly one quantum. No wall clock is
+                # accumulated and there is never more than one queued request.
+                time.sleep(0.001)
+                continue
+
+            if self.session_paused:
+                # Interactive pause is a real body-time barrier. Keep the owner
+                # responsive to resume and status traffic, but do not apply lab
+                # commands, tick LabWorld timers, render eyes, or advance MuJoCo.
+                last = now_mono
+                next_tick = now_mono
+                try:
+                    for response in self._drain_lab_responses():
+                        conn.sendall(encode(response))
+                    if now_mono >= next_lab_state:
+                        conn.sendall(encode(self._lab_state()))
+                        next_lab_state = now_mono + lab_state_period
+                except OSError:
+                    break
+                time.sleep(0.001)
+                continue
+
             if now_mono < next_tick:
                 time.sleep(min(0.002, next_tick - now_mono))
                 continue

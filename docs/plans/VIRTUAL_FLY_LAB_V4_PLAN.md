@@ -1,9 +1,26 @@
 # Virtual Fly Lab V4 — deterministic time and session lifecycle
 
-Status: **READY TO IMPLEMENT / NOT IMPLEMENTED**
+Status: **COMPLETE — 2026-09-13**
 Prepared: **2026-09-13**
 Baseline: `af8c0ba` (`Update README for V3 verification fixes`)
 Previous release: V3 implementation `31bd106` + verification remediation `4995162`
+
+## 0. 2026-09-13 completion status
+
+Final acceptance was performed on inspected HEAD `3ad60db` plus the preserved dirty V4 working tree. V4 is complete in that local working tree; no V4 Git commit was created by the acceptance pass. Preserve the existing dirty/untracked work rather than resetting it.
+
+The complete final Swift/Python suite, mock and real-headless TCP lockstep, real MuJoCo/vision tests, and a fresh real Viewer + GUI pause/resume/applied-tick smoke all pass. The GUI acceptance exposed and fixed one lifecycle bug: a persistent successful `session_state` snapshot could be consumed repeatedly after the local tick advanced. `LabSession` now consumes lifecycle confirmations monotonically by control sequence and `--v4test` covers that regression.
+
+Required order remains [V4 → V5 → … → V14](VIRTUAL_FLY_LAB_ROADMAP.md). V4 is now complete, so V5 is the next permitted implementation version. V5 is the participant Viewer, not the old checkpoint milestone. Full evidence is in [V4_COMPLETION_REPORT.md](../reports/V4_COMPLETION_REPORT.md).
+
+Completed finish checklist:
+
+1. [x] Inventory existing dirty V4 implementation against sections 3–10 and preserve unrelated work.
+2. [x] Build and run `--v4test`, `--v4timingtest` and Python `test_v4.py` with fresh exit-0 logs.
+3. [x] Run mock and real-headless `--v4loop` against managed test backends.
+4. [x] Execute pause/old epoch/duplicate/stall faults and the legacy regression suite sequentially.
+5. [x] Perform a fresh real Viewer smoke, including real deterministic start, >1 s pause freeze, paused command, Resume and applied tick.
+6. [x] Write `docs/reports/V4_COMPLETION_REPORT.md`; V5 may now begin.
 
 ## 1. V4 scope
 
@@ -17,7 +34,7 @@ The release contains only:
 4. exact recording of the simulation tick at which a lab command was applied;
 5. stale/old-epoch and duplicate-command rejection needed to make those guarantees real.
 
-V4 explicitly does **not** implement checkpoint save/restore (V5), individual export/transplant (V6), external world/package import (V7+), the new neuron inspector (V10), portable experiment replay (V11), humidity/taste (V12/V13), or any gain/connectome/shader retuning.
+V4 explicitly does **not** implement the participant Viewer (V5), basic editor (V6), exact neuron inspector (V7), external I/O host (V8), checkpoint/individual/replay (V9), advanced environment/humidity/taste (V10), state interpretation (V11), or any gain/connectome/shader retuning. See the revised V4–V14 roadmap for the mandatory sequence.
 
 ## 2. Current V3 timing facts that V4 must replace or preserve
 
@@ -148,13 +165,13 @@ Commands submitted while paused go to a bounded queue. They do not mutate simula
 Epoch represents a discontinuity in experiment state, not a TCP reconnect.
 
 - Create the session with epoch `1`.
-- Increment epoch whenever a reset invalidates the previous simulation timeline. V4 covers existing brain/body/world reset operations; later world swap/restore rules remain V7/V5 work.
+- Increment epoch whenever a reset invalidates the previous simulation timeline. V4 covers existing brain/body/world reset operations; later world swap/restore rules belong to the V6/V9/V10 contracts.
 - Clear/retag pending experiment-step state and stale natural sensory state at the boundary.
 - A packet, command, ACK or result from an older epoch is rejected and must not alter the new epoch.
 - `connectionGeneration` remains in Swift solely as a transport/reconnect freshness guard.
 - Presets that logically perform one reset sequence should use one coordinator reset transaction so they do not create accidental multiple epochs from `brain + world + body` implementation details.
 
-V4 does not serialize the epoch state to disk for continuation. That is V5 checkpoint work.
+V4 does not serialize the epoch state to disk for continuation. That is V9 checkpoint work.
 
 ## 8. Command scheduling and idempotency
 
@@ -175,7 +192,7 @@ Rules:
 
 ## 9. Recorder and telemetry changes
 
-This is still the existing CSV/events recorder, **not** the V11 portable experiment package.
+This is still the existing CSV/events recorder, **not** the V9 portable experiment package.
 
 Add enough fields to audit V4 timing:
 
@@ -322,7 +339,7 @@ Run a fresh real viewer + Lab GUI process and verify:
 2. deterministic mode exposes fixed tick/epoch and continues even when rendering is visually slowed;
 3. Pause visibly reaches `paused` and the real body stops advancing;
 4. a stimulus issued around Pause/Resume shows the authoritative applied tick;
-5. switching/starting a deterministic experiment does not silently enable V5 checkpoint semantics.
+5. switching/starting a deterministic experiment does not silently enable V9 checkpoint semantics.
 
 The user's previously reserved manual V3 recording-menu-Quit check remains a separate user-side smoke and is not redefined as a V4 implementation blocker.
 
@@ -339,4 +356,4 @@ When implementation is complete, create `docs/reports/V4_COMPLETION_REPORT.md` w
 - GUI smoke result and machine/runtime versions;
 - known limitations and rollback instructions.
 
-Do not mark V4 complete while any timing test still depends on render FPS or while Pause allows either backend to continue advancing. Do not start V5 checkpoint work until those gates are green.
+Do not mark V4 complete while any timing test still depends on render FPS or while Pause allows either backend to continue advancing. Do not start V5 participant Viewer work until those gates are green. Checkpoint work belongs to V9.

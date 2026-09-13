@@ -90,7 +90,7 @@ A–D가 통과한 뒤에만 진행한다. 대상은 `main.swift`의 modeled sen
 
 ## 5. 검증 및 완료 기준
 
-[장기 로드맵 §12](VIRTUAL_FLY_LAB_ROADMAP.md#12-검증-매트릭스와-성능)의 기존 회귀 전체를 실행한다. GPU와 timing-sensitive 검사는 부하를 겹치지 않게 순차 실행한다.
+[장기 로드맵 §12](../history/VIRTUAL_FLY_LAB_ROADMAP_PRE_INTERACTIVE_2026-09-13.md#12-검증-매트릭스와-성능)의 기존 회귀 전체를 실행한다. GPU와 timing-sensitive 검사는 부하를 겹치지 않게 순차 실행한다.
 
 - [x] A: `--gpucheck` C/H 포함 전체 exit 0, 비교의 독립성 유지.
 - [x] B: mock/real TCP loop 정상 만료 확인, 느린 wall-time simulation 허용, bounded simulation-time window 적용. timer 정지·10× 지연·0.1× 조기 종료 음성 대조는 모두 실패 탐지.

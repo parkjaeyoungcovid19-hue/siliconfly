@@ -50,6 +50,11 @@ struct LabCommand: Codable {
     var sensory: Bool? = nil
     var continuous: Bool? = nil
     var mode: String? = nil
+    // V4 deterministic-session envelope. Nil preserves the V3/legacy wire shape.
+    var protocolVersion: Int? = nil
+    var sessionID: String? = nil
+    var epoch: Int? = nil
+    var requestedTick: Int? = nil
 
     enum CodingKeys: String, CodingKey {
         case type, id, action, target, x, y, z, size, speed, strength, value
@@ -57,6 +62,10 @@ struct LabCommand: Codable {
         case directionDeg = "direction_deg"
         case endDistance = "end_distance_mm"
         case physical, sensory, continuous, mode
+        case protocolVersion = "protocol_version"
+        case sessionID = "session_id"
+        case epoch
+        case requestedTick = "requested_tick"
     }
 }
 
@@ -67,11 +76,21 @@ struct LabAck: Decodable, FlyGymStampedPacket {
     var ok: Bool = false
     var action: String = ""
     var message: String = ""
+    var appliedTick: Int?
+    var appliedEpoch: Int?
+    var status: String?
+    var sessionID: String?
+    var epoch: Int?
+    var simTick: Int?
     var receivedAt: Date = Date()
     var connectionGeneration: UInt64 = 0
 
     enum CodingKeys: String, CodingKey {
-        case type, id, ok, action, message
+        case type, id, ok, action, message, status, epoch
+        case appliedTick = "applied_tick"
+        case appliedEpoch = "applied_epoch"
+        case sessionID = "session_id"
+        case simTick = "sim_tick"
     }
 }
 
@@ -89,6 +108,33 @@ struct LabEventNotice: Decodable, FlyGymStampedPacket {
     }
 }
 
+struct LabWorldObjectRemote: Decodable {
+    var id: String
+    var shape: String
+    var positionMM: [Double]
+    var sizeMM: [Double]
+    var yawDeg: Double
+
+    enum CodingKeys: String, CodingKey {
+        case id, shape
+        case positionMM = "position_mm"
+        case sizeMM = "size_mm"
+        case yawDeg = "yaw_deg"
+    }
+}
+
+struct LabRemoteWorldState: Decodable {
+    var objects: [LabWorldObjectRemote]?
+    var slotCapacity: [String: Int]?
+    var slotFree: [String: Int]?
+
+    enum CodingKeys: String, CodingKey {
+        case objects
+        case slotCapacity = "slot_capacity"
+        case slotFree = "slot_free"
+    }
+}
+
 /// Python -> Swift compact lab state. Every field except `type` is optional so
 /// older/newer bridge versions remain displayable instead of becoming malformed.
 struct LabRemoteState: Decodable, FlyGymStampedPacket {
@@ -98,21 +144,45 @@ struct LabRemoteState: Decodable, FlyGymStampedPacket {
     var ok: Bool?
     var error: String?
     var objectCount: Int?
+    // `worldState` is the authoritative nested backend state. The optional
+    // flat fields remain decode-compatible with short-lived V4 development builds.
+    var objects: [LabWorldObjectRemote]?
+    var slotCapacity: [String: Int]?
+    var slotFree: [String: Int]?
+    var worldState: LabRemoteWorldState?
     var temperature: Double?
     var wind: Double?
     var leftEyeCovered: Bool?
     var rightEyeCovered: Bool?
     var lastAction: String?
+    var appliedTick: Int?
+    var appliedEpoch: Int?
+    var status: String?
+    var sessionID: String?
+    var epoch: Int?
+    var simTick: Int?
     var receivedAt: Date = Date()
     var connectionGeneration: UInt64 = 0
 
     enum CodingKeys: String, CodingKey {
-        case type, t, ack, ok, error, temperature, wind
+        case type, t, ack, ok, error, temperature, wind, status, epoch
         case objectCount = "object_count"
+        case objects
+        case slotCapacity = "slot_capacity"
+        case slotFree = "slot_free"
+        case worldState = "state"
         case leftEyeCovered = "left_eye_covered"
         case rightEyeCovered = "right_eye_covered"
         case lastAction = "last_action"
+        case appliedTick = "applied_tick"
+        case appliedEpoch = "applied_epoch"
+        case sessionID = "session_id"
+        case simTick = "sim_tick"
     }
+
+    var authoritativeObjects: [LabWorldObjectRemote]? { objects ?? worldState?.objects }
+    var authoritativeSlotCapacity: [String: Int]? { slotCapacity ?? worldState?.slotCapacity }
+    var authoritativeSlotFree: [String: Int]? { slotFree ?? worldState?.slotFree }
 }
 
 /// Render-owner snapshot copied under Coordinator's lock. It contains only
@@ -120,6 +190,15 @@ struct LabRemoteState: Decodable, FlyGymStampedPacket {
 struct LabTelemetry {
     var wallTime: TimeInterval = Date().timeIntervalSince1970
     var simMs: Int = 0
+    // V4 authoritative experiment-time/session fields. Wall time remains useful
+    // for diagnostics but is not the deterministic experiment clock.
+    var sessionID: String = ""
+    var sessionEpoch: Int = 0
+    var sessionSimTick: Int = 0
+    var sessionMode: String = "interactive"
+    var sessionPhase: String = "running"
+    var sessionPaused: Bool = false
+    var bodyResultTick: Int = -1
     var ratePop: Double = 0
     var rateLoom: Double = 0
     var rateDNaL: Double = 0
@@ -268,7 +347,7 @@ extension LabTelemetry {
         bodyConnectionGeneration = fb.connectionGeneration
     }
 
-    static let csvHeader = "wall_time,sim_ms,pop_hz,loom_hz,dna_l_hz,dna_r_hz,mdn_hz,dnp09_hz,dng11_hz,escw_hz,loom_l,loom_r,air_puff,gait_drive,odor_drive_l,odor_drive_r,thermo_warm_drive,thermo_cool_drive,wind_c_drive,wind_e_drive,temp_c,body_vx,body_yaw_rate,body_contact_mean,body_loom_l,body_loom_r,brightness_l,brightness_r,occupancy_l,occupancy_r,optic_expansion_l,optic_expansion_r,flash_l,flash_r,odor_l,odor_r,nearest_food_mm,fly_state,body_sim_s,body_sim_dt,body_wall_dt,body_sim_wall_ratio,body_packet_age_s,body_generation,receptor_odor_l_hz,receptor_odor_r_hz,receptor_warm_hz,receptor_cool_hz,receptor_wind_c_hz,receptor_wind_e_hz,brain_signals_available,brain_walk,brain_turn,brain_escape,brain_backward,brain_groom,brain_wing,brain_arousal,brain_tempo,brain_sleep,brain_nervous,controller_left,controller_right,body_wind_strength,body_wind_direction_deg,body_wind_sensory,body_touch_strength,body_touch_sensory\n"
+    static let csvHeader = "wall_time,sim_ms,pop_hz,loom_hz,dna_l_hz,dna_r_hz,mdn_hz,dnp09_hz,dng11_hz,escw_hz,loom_l,loom_r,air_puff,gait_drive,odor_drive_l,odor_drive_r,thermo_warm_drive,thermo_cool_drive,wind_c_drive,wind_e_drive,temp_c,body_vx,body_yaw_rate,body_contact_mean,body_loom_l,body_loom_r,brightness_l,brightness_r,occupancy_l,occupancy_r,optic_expansion_l,optic_expansion_r,flash_l,flash_r,odor_l,odor_r,nearest_food_mm,fly_state,body_sim_s,body_sim_dt,body_wall_dt,body_sim_wall_ratio,body_packet_age_s,body_generation,receptor_odor_l_hz,receptor_odor_r_hz,receptor_warm_hz,receptor_cool_hz,receptor_wind_c_hz,receptor_wind_e_hz,brain_signals_available,brain_walk,brain_turn,brain_escape,brain_backward,brain_groom,brain_wing,brain_arousal,brain_tempo,brain_sleep,brain_nervous,controller_left,controller_right,body_wind_strength,body_wind_direction_deg,body_wind_sensory,body_touch_strength,body_touch_sensory,session_id,session_epoch,session_sim_tick,session_mode,session_phase,session_paused,body_result_tick\n"
 
     var csvLine: String {
         let safeState = flyState.replacingOccurrences(of: ",", with: "_")
@@ -284,7 +363,7 @@ extension LabTelemetry {
                           bodyOdorL, bodyOdorR, bodyNearestFoodDistanceMm,
                           safeState, bodySimTime, bodySimDt, bodyWallDt, bodySimWallRatio,
                           bodyPacketAgeS, bodyConnectionGeneration)
-        let diagnostic = String(format: ",%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%d,%.5f,%.5f,%d,%d,%.5f,%.5f,%.5f,%.5f,%d,%.5f,%.5f,%.5f,%.5f,%.5f,%d,%.5f,%d\n",
+        let diagnostic = String(format: ",%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%d,%.5f,%.5f,%d,%d,%.5f,%.5f,%.5f,%.5f,%d,%.5f,%.5f,%.5f,%.5f,%.5f,%d,%.5f,%d",
                                 rateFoodOdorL, rateFoodOdorR, rateThermoWarm, rateThermoCool,
                                 rateWindC, rateWindE, brainSignalsAvailable ? 1 : 0,
                                 brainWalkDrive, brainTurnBias, brainEscape ? 1 : 0,
@@ -293,7 +372,11 @@ extension LabTelemetry {
                                 bodyControllerLeft, bodyControllerRight,
                                 bodyWindStrength, bodyWindDirectionDeg, bodyWindSensory ? 1 : 0,
                                 bodyTouchStrength, bodyTouchSensory ? 1 : 0)
-        return base + diagnostic
+        let safeSession = sessionID.replacingOccurrences(of: ",", with: "_")
+        let safeMode = sessionMode.replacingOccurrences(of: ",", with: "_")
+        let safePhase = sessionPhase.replacingOccurrences(of: ",", with: "_")
+        let session = ",\(safeSession),\(sessionEpoch),\(sessionSimTick),\(safeMode),\(safePhase),\(sessionPaused ? 1 : 0),\(bodyResultTick)\n"
+        return base + diagnostic + session
     }
 }
 
@@ -342,10 +425,17 @@ func runLabTest() {
           "depth=\(bridge.pendingLabDepth()) dropped=\(bridge.labDropped)")
     check("lab queue drops oldest", bridge.labDropped == 68, "dropped=\(bridge.labDropped)")
 
-    let stateLine = #"{"type":"lab_state","t":1.25,"ack":7,"ok":false,"error":"bad target","object_count":3,"temperature":27.0,"wind":0.4,"left_eye_covered":true,"right_eye_covered":false}"#
+    let stateLine = #"{"type":"lab_state","t":1.25,"ack":7,"ok":false,"error":"bad target","object_count":1,"state":{"objects":[{"id":"wall_1","shape":"wall","position_mm":[12.0,-3.0,7.5],"size_mm":[2.0,30.0,15.0],"yaw_deg":15.0}],"slot_capacity":{"box":64,"sphere":64,"wall":64,"food":32},"slot_free":{"box":64,"sphere":64,"wall":63,"food":32}},"temperature":27.0,"wind":0.4,"left_eye_covered":true,"right_eye_covered":false}"#
     let state = parseLabStateLine(Data(stateLine.utf8))
+    let wallState = state?.authoritativeObjects?.first
     check("lab_state parse", state?.ack == 7 && state?.ok == false && state?.error == "bad target"
-          && state?.objectCount == 3 && state?.leftEyeCovered == true && state?.rightEyeCovered == false)
+          && state?.objectCount == 1 && state?.leftEyeCovered == true && state?.rightEyeCovered == false
+          && wallState?.id == "wall_1" && wallState?.shape == "wall"
+          && wallState?.positionMM == [12.0, -3.0, 7.5]
+          && wallState?.sizeMM == [2.0, 30.0, 15.0]
+          && abs((wallState?.yawDeg ?? -999) - 15.0) < 1e-9
+          && state?.authoritativeSlotCapacity?["wall"] == 64
+          && state?.authoritativeSlotFree?["wall"] == 63)
     check("lab_state type gate", parseLabStateLine(Data(#"{"type":"body","ack":7}"#.utf8)) == nil)
     let event = parseLabEventLine(Data(#"{"type":"lab_event","event":"approach_complete","data":{"id":"x"}}"#.utf8))
     check("lab_event parse", event?.event == "approach_complete")
@@ -728,7 +818,7 @@ func runLabTest() {
         let metadata = (try? String(contentsOfFile: recordingPath + "/metadata.json", encoding: .utf8)) ?? ""
         let telemetry = (try? String(contentsOfFile: recordingPath + "/telemetry.csv", encoding: .utf8)) ?? ""
         let events = (try? String(contentsOfFile: recordingPath + "/events.jsonl", encoding: .utf8)) ?? ""
-        check("recorder writes V2 metadata", metadata.contains("Thongpari Fly Neuron Sim Virtual Fly Lab V2"))
+        check("recorder writes V4 metadata", metadata.contains("Thongpari Fly Neuron Sim Virtual Fly Lab V4"))
         check("recorder stop completes only after saved state",
               completed && stopOutcome?.succeeded == true && recorder.state == .saved,
               "completed=\(completed) state=\(recorder.state.rawValue)")

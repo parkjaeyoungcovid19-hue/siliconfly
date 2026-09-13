@@ -14,6 +14,7 @@ except Exception:
 class MockBody:
     """Kinematic mock: no physics, deterministic-ish, bounded state."""
     def __init__(self):
+        self.physics_timestep_s = 0.001
         self.x = 0.0
         self.y = 0.0
         self.heading = 0.0
@@ -29,9 +30,9 @@ class MockBody:
         self.controller_right = 0.0
         self.lab_world = LabWorld()
 
-    def step(self, cmd, dt, tempo=1.0):
-        dt = max(1e-4, min(0.1, dt))
-        sim_dt = dt
+    def _step_duration(self, cmd, sim_dt, wall_dt, tempo=1.0):
+        sim_dt = max(self.physics_timestep_s, min(0.1, float(sim_dt)))
+        wall_dt = max(0.0, float(wall_dt))
         try:
             tempo = float(tempo)
         except (TypeError, ValueError):
@@ -46,21 +47,35 @@ class MockBody:
             target_v = 0.0
         if cmd.urgent:
             target_v *= 1.5
-        self.vx += (target_v - self.vx) * min(1.0, dt * 6.0)
+        self.vx += (target_v - self.vx) * min(1.0, sim_dt * 6.0)
         yaw_target = 2.5 * cmd.steering * (0.4 + 0.6 * min(1.0, abs(self.vx) / 0.02 + 0.2))
         if not cmd.moving:
             yaw_target = 0.0
-        self.yaw_rate += (yaw_target - self.yaw_rate) * min(1.0, dt * 5.0)
+        self.yaw_rate += (yaw_target - self.yaw_rate) * min(1.0, sim_dt * 5.0)
         self.heading += self.yaw_rate * sim_dt
         self.x += math.cos(self.heading) * self.vx * sim_dt
         self.y += math.sin(self.heading) * self.vx * sim_dt
         stride = 8.0  # Hz tripod-ish alternation
         self.phase = (self.phase + sim_dt * stride) % 2.0
         self.t += sim_dt
-        self.wall_elapsed_s += dt
+        self.wall_elapsed_s += wall_dt
         self.last_step_sim_dt = sim_dt
-        self.last_step_wall_dt = dt
+        self.last_step_wall_dt = wall_dt
         return self.observe()
+
+    def step(self, cmd, dt, tempo=1.0):
+        dt = max(1e-4, min(0.1, dt))
+        return self._step_duration(cmd, dt, dt, tempo=tempo)
+
+    def step_exact(self, cmd, substeps, tempo=1.0):
+        if isinstance(substeps, bool) or not isinstance(substeps, int) or substeps <= 0:
+            raise ValueError("substeps must be a positive integer")
+        sim_dt = substeps * self.physics_timestep_s
+        if sim_dt > 0.1 + 1e-12:
+            raise ValueError("exact step exceeds mock body maximum chunk")
+        # Deterministic stepping has no wall-derived duration.  Keep wall_dt at
+        # zero so telemetry cannot mistake experiment time for elapsed real time.
+        return self._step_duration(cmd, sim_dt, 0.0, tempo=tempo)
 
     def observe(self):
         tripod_a = 1.0 if self.phase < 1.0 else 0.0
@@ -91,6 +106,7 @@ class MockBody:
                           gait_phase=(self.phase / 2.0),
                           odor_left=odor["odor_left"], odor_right=odor["odor_right"],
                           nearest_food_distance_mm=odor["nearest_food_distance_mm"],
+                          position_x_mm=self.x * 1000.0, position_y_mm=self.y * 1000.0,
                           heading_rad=math.atan2(math.sin(self.heading), math.cos(self.heading)))
 
     def apply_lab_command(self, command):
@@ -204,6 +220,7 @@ class RealFlyBody:
             spawn_rotation=Rotation3D('quat', (1, 0, 0, 0)),
         )
         self.sim = Simulation(self.world)
+        self.physics_timestep_s = float(self.sim.timestep)
         self.lab_world.bind(self.sim, self._lab_force_body_ids())
         if box is not None:
             try:
@@ -484,28 +501,25 @@ class RealFlyBody:
     def drain_lab_events(self):
         return self.lab_world.drain_events()
 
-    def step(self, cmd, dt, tempo=1.0):
+    def _step_substeps(self, cmd, n, wall_dt, tempo=1.0):
         np = self.np
-        dt = max(1e-4, min(0.1, dt))
+        if isinstance(n, bool) or not isinstance(n, int) or n <= 0:
+            raise ValueError("physics substeps must be a positive integer")
+        if n > self.max_physics_substeps:
+            raise ValueError("physics substeps exceed maximum simulation chunk")
+        wall_dt = max(0.0, float(wall_dt))
         self._apply_controller_tempo(tempo)
         sig = brain_to_descending(cmd)
         self.last_cmd = sig
         self._configure_cpg_drive(sig)
-        # Advance enough native physics to track the caller's elapsed time, but
-        # cap catch-up to 20 ms so a single slow render cannot trigger an
-        # unbounded backlog.  With the decimated 500 Hz actuator-target refresh,
-        # this is fast enough to run near real-time headless on the target M2.
-        n = max(1, min(
-            self.max_physics_substeps,
-            int(round(min(dt, self.max_sim_chunk_s) / self.sim.timestep)),
-        ))
         for _ in range(n):
             self._controller_substep(sig)
             self.lab_world.pre_step(self.sim.timestep)
             self.sim.step()
         # --- observe: velocity from thorax displacement (mm -> m/s) ---
         pos = self.sim.get_body_positions('fly')
-        xy = pos.mean(axis=0)[:2] / 1000.0
+        xy_mm = pos.mean(axis=0)[:2]
+        xy = xy_mm / 1000.0
         h = self._heading()
         yaw_now = float(np.arctan2(h[1], h[0]))
         # Sim-time displacement: n substeps x timestep (wall clock lies when
@@ -543,9 +557,9 @@ class RealFlyBody:
             gait_phase = None
         # Protocol time is actual MuJoCo simulation time, not wall time.
         self.t += sim_dt
-        self.wall_elapsed_s += dt
+        self.wall_elapsed_s += wall_dt
         self.last_step_sim_dt = sim_dt
-        self.last_step_wall_dt = dt
+        self.last_step_wall_dt = wall_dt
         # --- actual FlyGym eye-camera vision -> looming proxy ---
         # Stereo rendering is much more expensive than one body/control tick on
         # the target M2, so render at 5 Hz
@@ -564,8 +578,9 @@ class RealFlyBody:
         else:
             self.vision_state = self.vision.decay(sim_dt)
         self.vision_state = self.lab_world.augment_vision_state(self.vision_state)
+        thorax_position_mm = self._thorax_position()
         odor = self.lab_world.food_odor(
-            fly_position_mm=self._thorax_position(), fly_heading_rad=yaw_now)
+            fly_position_mm=thorax_position_mm, fly_heading_rad=yaw_now)
         if self.viewer is not None:
             if self.viewer.is_running():
                 # The passive viewer can contend with MuJoCo data access on an
@@ -577,9 +592,9 @@ class RealFlyBody:
             else:
                 self.viewer.close()
                 self.viewer = None
-        sim_wall_ratio = sim_dt / dt if dt > 0.0 else 0.0
+        sim_wall_ratio = sim_dt / wall_dt if wall_dt > 0.0 else 0.0
         touch = self.lab_world.touch
-        return BodyPacket(t=self.t, sim_dt=sim_dt, wall_dt=dt,
+        return BodyPacket(t=self.t, sim_dt=sim_dt, wall_dt=wall_dt,
                           sim_wall_ratio=sim_wall_ratio,
                           controller_left=float(self.last_cmd[0]),
                           controller_right=float(self.last_cmd[1]),
@@ -604,8 +619,28 @@ class RealFlyBody:
                           flash_right=self.vision_state.get('flash_right', 0.0),
                           odor_left=odor["odor_left"], odor_right=odor["odor_right"],
                           nearest_food_distance_mm=odor["nearest_food_distance_mm"],
+                          position_x_mm=float(thorax_position_mm[0]),
+                          position_y_mm=float(thorax_position_mm[1]),
                           heading_rad=yaw_now,
                           bearing=self.vision_state['bearing'])
+
+    def step(self, cmd, dt, tempo=1.0):
+        dt = max(1e-4, min(0.1, dt))
+        # Interactive/V3 path: caller wall duration is rounded to native physics
+        # and catch-up remains capped exactly as before V4.
+        n = max(1, min(
+            self.max_physics_substeps,
+            int(round(min(dt, self.max_sim_chunk_s) / self.sim.timestep)),
+        ))
+        return self._step_substeps(cmd, n, dt, tempo=tempo)
+
+    def step_exact(self, cmd, substeps, tempo=1.0):
+        """Advance an exact integer count of native MuJoCo substeps.
+
+        This is the V4 lockstep primitive.  It never derives duration from wall
+        time and never rounds a requested duration to another number of steps.
+        """
+        return self._step_substeps(cmd, substeps, 0.0, tempo=tempo)
 
     def close(self):
         if self.viewer is not None:

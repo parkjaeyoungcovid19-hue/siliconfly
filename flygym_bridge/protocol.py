@@ -11,6 +11,20 @@ BODY_TYPE = "body"
 LAB_COMMAND_TYPE = "lab_command"
 LAB_STATE_TYPE = "lab_state"
 LAB_EVENT_TYPE = "lab_event"
+HELLO_TYPE = "hello"
+SESSION_CONTROL_TYPE = "session_control"
+SESSION_STATE_TYPE = "session_state"
+EXPERIMENT_STEP_TYPE = "experiment_step"
+EXPERIMENT_STEP_RESULT_TYPE = "experiment_step_result"
+
+V4_PROTOCOL_VERSION = 4
+V4_EXPERIMENT_QUANTUM_TICKS = 20
+V4_CAPABILITIES = {
+    "deterministic_experiment",
+    "pause_barrier",
+    "epoch",
+    "applied_tick",
+}
 
 MAX_DISCRETE_LAB_COMMANDS = 128
 MAX_CONTINUOUS_LAB_SLOTS = 64
@@ -27,6 +41,21 @@ def clamp(x, lo, hi):
     if not math.isfinite(v):
         v = 0.0
     return max(lo, min(hi, v))
+
+
+def _bounded_int(value, lo=0, hi=9_223_372_036_854_775_807, default=0):
+    try:
+        out = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return int(default)
+    return max(int(lo), min(int(hi), out))
+
+
+def _session_id(value):
+    text = str(value or "").strip()
+    if len(text) > 128:
+        raise ValueError("session_id too long")
+    return text
 
 @dataclass
 class BrainPacket:
@@ -99,6 +128,8 @@ class BodyPacket:
     odor_left: float = 0.0
     odor_right: float = 0.0
     nearest_food_distance_mm: float | None = None
+    position_x_mm: float = 0.0
+    position_y_mm: float = 0.0
     heading_rad: float = 0.0
     bearing: float = 0.0
 
@@ -145,6 +176,8 @@ class BodyPacket:
         nearest_food = d.get("nearest_food_distance_mm", None)
         p.nearest_food_distance_mm = (
             clamp(nearest_food, 0.0, 1e6) if nearest_food is not None else None)
+        p.position_x_mm = clamp(d.get("position_x_mm", 0.0), -1e6, 1e6)
+        p.position_y_mm = clamp(d.get("position_y_mm", 0.0), -1e6, 1e6)
         p.heading_rad = clamp(d.get("heading_rad", 0.0), -math.pi, math.pi)
         p.bearing = clamp(d.get("bearing", 0.0), -1.0, 1.0)
         return p
@@ -171,12 +204,251 @@ class BodyPacket:
              "optic_expansion_right": self.optic_expansion_right,
              "flash_left": self.flash_left, "flash_right": self.flash_right,
              "odor_left": self.odor_left, "odor_right": self.odor_right,
+             "position_x_mm": self.position_x_mm, "position_y_mm": self.position_y_mm,
              "heading_rad": self.heading_rad, "bearing": self.bearing}
         if self.nearest_food_distance_mm is not None:
             d["nearest_food_distance_mm"] = self.nearest_food_distance_mm
         if self.gait_phase is not None:
             d["gait_phase"] = self.gait_phase
         return d
+
+
+@dataclass
+class HelloPacket:
+    """V4 capability declaration.
+
+    Legacy peers simply never send this packet.  The deterministic path must not
+    be enabled unless all required capabilities are explicitly present.
+    """
+    protocol_version: int = V4_PROTOCOL_VERSION
+    role: str = "python"
+    capabilities: set[str] = field(default_factory=lambda: set(V4_CAPABILITIES))
+    physics_timestep_s: float | None = None
+    supported_quantum_ticks: list[int] = field(
+        default_factory=lambda: [V4_EXPERIMENT_QUANTUM_TICKS])
+
+    @staticmethod
+    def from_dict(d: dict) -> "HelloPacket":
+        if not isinstance(d, dict):
+            raise ValueError("hello packet must be an object")
+        version = _bounded_int(d.get("protocol_version", 0), 0, 1_000_000)
+        role = str(d.get("role", ""))[:32]
+        raw_caps = d.get("capabilities", [])
+        if isinstance(raw_caps, dict):
+            caps = {str(k) for k, enabled in raw_caps.items() if bool(enabled)}
+        elif isinstance(raw_caps, (list, tuple, set)):
+            caps = {str(v) for v in raw_caps}
+        else:
+            caps = set()
+        raw_dt = d.get("physics_timestep_s")
+        physics_dt = None
+        if raw_dt is not None:
+            try:
+                candidate = float(raw_dt)
+            except (TypeError, ValueError, OverflowError):
+                candidate = math.nan
+            if math.isfinite(candidate) and candidate > 0:
+                physics_dt = min(1.0, candidate)
+        raw_quanta = d.get("supported_quantum_ticks", [])
+        quanta = []
+        if isinstance(raw_quanta, (list, tuple)):
+            for value in raw_quanta[:32]:
+                q = _bounded_int(value, 1, 1_000_000, default=0)
+                if q > 0 and q not in quanta:
+                    quanta.append(q)
+        return HelloPacket(protocol_version=version, role=role,
+                           capabilities=caps, physics_timestep_s=physics_dt,
+                           supported_quantum_ticks=quanta)
+
+    def supports_v4_deterministic(self, quantum_ticks=V4_EXPERIMENT_QUANTUM_TICKS,
+                                  require_physics_timestep=True) -> bool:
+        return (self.protocol_version >= V4_PROTOCOL_VERSION and
+                V4_CAPABILITIES.issubset(self.capabilities) and
+                int(quantum_ticks) in self.supported_quantum_ticks and
+                (self.physics_timestep_s is not None or not require_physics_timestep))
+
+    def to_dict(self) -> dict:
+        out = {
+            "type": HELLO_TYPE,
+            "protocol_version": int(self.protocol_version),
+            "role": self.role,
+            "capabilities": sorted(self.capabilities),
+            "supported_quantum_ticks": [int(v) for v in self.supported_quantum_ticks],
+        }
+        if self.physics_timestep_s is not None:
+            out["physics_timestep_s"] = float(self.physics_timestep_s)
+        return out
+
+
+@dataclass
+class SessionControlPacket:
+    protocol_version: int = V4_PROTOCOL_VERSION
+    session_id: str = ""
+    epoch: int = 1
+    seq: int = 0
+    sim_tick: int = 0
+    action: str = "pause"
+    mode: str = "interactive"
+    reset_scope: list[str] = field(default_factory=list)
+
+    @staticmethod
+    def from_dict(d: dict) -> "SessionControlPacket":
+        if not isinstance(d, dict):
+            raise ValueError("session control must be an object")
+        action = str(d.get("action", "")).strip().lower()
+        if action not in {"pause", "resume", "reset", "begin"}:
+            raise ValueError("invalid session control action")
+        mode = str(d.get("mode", "interactive")).strip().lower()
+        if mode not in {"interactive", "deterministic"}:
+            raise ValueError("invalid session mode")
+        return SessionControlPacket(
+            protocol_version=_bounded_int(d.get("protocol_version", 0), 0, 1_000_000),
+            session_id=_session_id(d.get("session_id", "")),
+            epoch=_bounded_int(d.get("epoch", 1), 1),
+            seq=_bounded_int(d.get("seq", 0)),
+            sim_tick=_bounded_int(d.get("sim_tick", 0)),
+            action=action,
+            mode=mode,
+            reset_scope=[str(v) for v in d.get("reset_scope", [])[:16]]
+            if isinstance(d.get("reset_scope", []), (list, tuple)) else [],
+        )
+
+    def to_dict(self) -> dict:
+        out = {"type": SESSION_CONTROL_TYPE,
+                "protocol_version": self.protocol_version,
+                "session_id": self.session_id, "epoch": self.epoch,
+                "seq": self.seq, "sim_tick": self.sim_tick,
+                "action": self.action, "mode": self.mode}
+        if self.reset_scope:
+            out["reset_scope"] = list(self.reset_scope)
+        return out
+
+
+@dataclass
+class SessionStatePacket:
+    protocol_version: int = V4_PROTOCOL_VERSION
+    session_id: str = ""
+    epoch: int = 1
+    seq: int = 0
+    sim_tick: int = 0
+    mode: str = "interactive"
+    state: str = "running"
+    ok: bool = True
+    error: str | None = None
+
+    @staticmethod
+    def from_dict(d: dict) -> "SessionStatePacket":
+        if not isinstance(d, dict):
+            raise ValueError("session state must be an object")
+        mode = str(d.get("mode", "interactive")).strip().lower()
+        if mode not in {"interactive", "deterministic"}:
+            mode = "interactive"
+        state = str(d.get("state", "running")).strip().lower()[:32]
+        return SessionStatePacket(
+            protocol_version=_bounded_int(d.get("protocol_version", 0), 0, 1_000_000),
+            session_id=_session_id(d.get("session_id", "")),
+            epoch=_bounded_int(d.get("epoch", 1), 1),
+            seq=_bounded_int(d.get("seq", 0)),
+            sim_tick=_bounded_int(d.get("sim_tick", 0)),
+            mode=mode, state=state, ok=bool(d.get("ok", True)),
+            error=None if d.get("error") is None else str(d.get("error"))[:512],
+        )
+
+    def to_dict(self) -> dict:
+        out = {"type": SESSION_STATE_TYPE,
+               "protocol_version": self.protocol_version,
+               "session_id": self.session_id, "epoch": self.epoch,
+               "seq": self.seq, "sim_tick": self.sim_tick,
+               "mode": self.mode, "state": self.state, "ok": self.ok}
+        if self.error is not None:
+            out["error"] = self.error
+        return out
+
+
+@dataclass
+class ExperimentStepPacket:
+    protocol_version: int = V4_PROTOCOL_VERSION
+    session_id: str = ""
+    epoch: int = 1
+    seq: int = 0
+    sim_tick: int = 0
+    quantum_ticks: int = V4_EXPERIMENT_QUANTUM_TICKS
+    brain: BrainPacket = field(default_factory=BrainPacket)
+
+    @staticmethod
+    def from_dict(d: dict) -> "ExperimentStepPacket":
+        if not isinstance(d, dict):
+            raise ValueError("experiment step must be an object")
+        raw_brain = d.get("brain", {})
+        if not isinstance(raw_brain, dict):
+            raise ValueError("experiment step brain must be an object")
+        brain_dict = dict(raw_brain)
+        brain_dict.setdefault("type", BRAIN_TYPE)
+        return ExperimentStepPacket(
+            protocol_version=_bounded_int(d.get("protocol_version", 0), 0, 1_000_000),
+            session_id=_session_id(d.get("session_id", "")),
+            epoch=_bounded_int(d.get("epoch", 1), 1),
+            seq=_bounded_int(d.get("seq", 0)),
+            sim_tick=_bounded_int(d.get("sim_tick", 0)),
+            quantum_ticks=_bounded_int(d.get("quantum_ticks", 0), 1, 1_000_000),
+            brain=BrainPacket.from_dict(brain_dict),
+        )
+
+    def to_dict(self) -> dict:
+        brain = self.brain.to_dict()
+        brain.pop("type", None)
+        return {"type": EXPERIMENT_STEP_TYPE,
+                "protocol_version": self.protocol_version,
+                "session_id": self.session_id, "epoch": self.epoch,
+                "seq": self.seq, "sim_tick": self.sim_tick,
+                "quantum_ticks": self.quantum_ticks, "brain": brain}
+
+
+@dataclass
+class ExperimentStepResultPacket:
+    protocol_version: int = V4_PROTOCOL_VERSION
+    session_id: str = ""
+    epoch: int = 1
+    seq: int = 0
+    sim_tick: int = 0
+    end_sim_tick: int = 0
+    ok: bool = True
+    error: str | None = None
+    body: BodyPacket = field(default_factory=BodyPacket)
+
+    @staticmethod
+    def from_dict(d: dict) -> "ExperimentStepResultPacket":
+        if not isinstance(d, dict):
+            raise ValueError("experiment step result must be an object")
+        raw_body = d.get("body", {})
+        if not isinstance(raw_body, dict):
+            raise ValueError("experiment result body must be an object")
+        body_dict = dict(raw_body)
+        body_dict.setdefault("type", BODY_TYPE)
+        return ExperimentStepResultPacket(
+            protocol_version=_bounded_int(d.get("protocol_version", 0), 0, 1_000_000),
+            session_id=_session_id(d.get("session_id", "")),
+            epoch=_bounded_int(d.get("epoch", 1), 1),
+            seq=_bounded_int(d.get("seq", 0)),
+            sim_tick=_bounded_int(d.get("sim_tick", 0)),
+            end_sim_tick=_bounded_int(d.get("end_sim_tick", 0)),
+            ok=bool(d.get("ok", True)),
+            error=None if d.get("error") is None else str(d.get("error"))[:512],
+            body=BodyPacket.from_dict(body_dict),
+        )
+
+    def to_dict(self) -> dict:
+        body = self.body.to_dict()
+        body.pop("type", None)
+        out = {"type": EXPERIMENT_STEP_RESULT_TYPE,
+               "protocol_version": self.protocol_version,
+               "session_id": self.session_id, "epoch": self.epoch,
+               "seq": self.seq, "sim_tick": self.sim_tick,
+               "end_sim_tick": self.end_sim_tick, "ok": self.ok,
+               "body": body}
+        if self.error is not None:
+            out["error"] = self.error
+        return out
 
 
 @dataclass
@@ -190,6 +462,10 @@ class LabCommand:
     seq: int = 0
     op: str = ""
     args: dict = field(default_factory=dict)
+    session_id: str | None = None
+    epoch: int | None = None
+    requested_tick: int | None = None
+    protocol_version: int | None = None
 
     @staticmethod
     def from_dict(d: dict) -> "LabCommand":
@@ -208,7 +484,8 @@ class LabCommand:
         raw_args = d.get("args", {})
         args = dict(raw_args) if isinstance(raw_args, dict) else {}
         for key, value in d.items():
-            if key not in ("type", "seq", "op", "id", "action", "args") and key not in args:
+            if key not in ("type", "seq", "op", "id", "action", "args",
+                           "session_id", "epoch", "requested_tick", "protocol_version") and key not in args:
                 args[key] = value
 
         # Normalize the flat Swift V1 command into the internal argument names.
@@ -241,10 +518,27 @@ class LabCommand:
         if op in ("set_eye_state", "eye_state") and target in ("left", "right") and "value" in d:
             # Swift value=1 means covered; value=0 means restored.
             args[f"{target}_mask"] = d.get("value")
-        return LabCommand(seq=seq, op=op, args=args)
+        session_id = None if d.get("session_id") is None else _session_id(d.get("session_id"))
+        epoch = None if d.get("epoch") is None else _bounded_int(d.get("epoch"), 1)
+        requested_tick = (None if d.get("requested_tick") is None else
+                          _bounded_int(d.get("requested_tick"), 0))
+        protocol_version = (None if d.get("protocol_version") is None else
+                            _bounded_int(d.get("protocol_version"), 0, 1_000_000))
+        return LabCommand(seq=seq, op=op, args=args, session_id=session_id,
+                          epoch=epoch, requested_tick=requested_tick,
+                          protocol_version=protocol_version)
 
     def to_dict(self) -> dict:
-        return {"type": LAB_COMMAND_TYPE, "seq": self.seq, "op": self.op, "args": self.args}
+        out = {"type": LAB_COMMAND_TYPE, "seq": self.seq, "op": self.op, "args": self.args}
+        if self.session_id is not None:
+            out["session_id"] = self.session_id
+        if self.epoch is not None:
+            out["epoch"] = self.epoch
+        if self.requested_tick is not None:
+            out["requested_tick"] = self.requested_tick
+        if self.protocol_version is not None:
+            out["protocol_version"] = self.protocol_version
+        return out
 
     def continuous_key(self):
         if self.op not in CONTINUOUS_LAB_OPS:
@@ -275,6 +569,12 @@ class LabStatePacket:
     ok: bool = True
     error: str | None = None
     state: dict = field(default_factory=dict)
+    applied_tick: int | None = None
+    applied_epoch: int | None = None
+    status: str | None = None
+    session_id: str | None = None
+    epoch: int | None = None
+    sim_tick: int | None = None
 
     @staticmethod
     def from_dict(d: dict) -> "LabStatePacket":
@@ -292,12 +592,32 @@ class LabStatePacket:
             ok=bool(d.get("ok", True)),
             error=None if d.get("error") is None else str(d.get("error"))[:512],
             state=dict(state) if isinstance(state, dict) else {},
+            applied_tick=(None if d.get("applied_tick") is None else
+                          _bounded_int(d.get("applied_tick"), 0)),
+            applied_epoch=(None if d.get("applied_epoch") is None else
+                           _bounded_int(d.get("applied_epoch"), 1)),
+            status=None if d.get("status") is None else str(d.get("status"))[:64],
+            session_id=(None if d.get("session_id") is None else _session_id(d.get("session_id"))),
+            epoch=(None if d.get("epoch") is None else _bounded_int(d.get("epoch"), 1)),
+            sim_tick=(None if d.get("sim_tick") is None else _bounded_int(d.get("sim_tick"), 0)),
         )
 
     def to_dict(self) -> dict:
         d = {"type": LAB_STATE_TYPE, "ack": self.ack, "ok": self.ok, "state": self.state}
         if self.error is not None:
             d["error"] = self.error
+        if self.applied_tick is not None:
+            d["applied_tick"] = self.applied_tick
+        if self.applied_epoch is not None:
+            d["applied_epoch"] = self.applied_epoch
+        if self.status is not None:
+            d["status"] = self.status
+        if self.session_id is not None:
+            d["session_id"] = self.session_id
+        if self.epoch is not None:
+            d["epoch"] = self.epoch
+        if self.sim_tick is not None:
+            d["sim_tick"] = self.sim_tick
         # Swift V1 deliberately decodes a small flat summary while the nested
         # state object retains the complete backend state for future clients.
         if isinstance(self.state, dict):
@@ -426,6 +746,16 @@ def decode_line(line: bytes):
             return LabStatePacket.from_dict(d)
         if kind == LAB_EVENT_TYPE:
             return LabEventPacket.from_dict(d)
+        if kind == HELLO_TYPE:
+            return HelloPacket.from_dict(d)
+        if kind == SESSION_CONTROL_TYPE:
+            return SessionControlPacket.from_dict(d)
+        if kind == SESSION_STATE_TYPE:
+            return SessionStatePacket.from_dict(d)
+        if kind == EXPERIMENT_STEP_TYPE:
+            return ExperimentStepPacket.from_dict(d)
+        if kind == EXPERIMENT_STEP_RESULT_TYPE:
+            return ExperimentStepResultPacket.from_dict(d)
     except Exception:
         return None
     return None

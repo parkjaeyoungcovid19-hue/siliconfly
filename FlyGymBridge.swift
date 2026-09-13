@@ -46,6 +46,126 @@ struct FlyGymBrainPacket: Codable {
     init() {}
 }
 
+enum FlyGymProtocolV4 {
+    static let version = 4
+    static let experimentQuantumTicks = 20
+    static let capabilities = ["applied_tick", "deterministic_experiment", "epoch", "pause_barrier"]
+}
+
+struct FlyGymHelloPacket: Codable, FlyGymStampedPacket {
+    var type: String = "hello"
+    var protocolVersion: Int = FlyGymProtocolV4.version
+    var role: String = "swift"
+    var capabilities: [String] = FlyGymProtocolV4.capabilities
+    var physicsTimestepS: Double?
+    var supportedQuantumTicks: [Int] = [FlyGymProtocolV4.experimentQuantumTicks]
+    var receivedAt: Date = Date()
+    var connectionGeneration: UInt64 = 0
+
+    enum CodingKeys: String, CodingKey {
+        case type, role, capabilities
+        case protocolVersion = "protocol_version"
+        case physicsTimestepS = "physics_timestep_s"
+        case supportedQuantumTicks = "supported_quantum_ticks"
+    }
+
+    var supportsDeterministicV4: Bool {
+        guard protocolVersion >= FlyGymProtocolV4.version,
+              supportedQuantumTicks.contains(FlyGymProtocolV4.experimentQuantumTicks),
+              let physicsTimestepS, physicsTimestepS.isFinite, physicsTimestepS > 0 else { return false }
+        return Set(FlyGymProtocolV4.capabilities).isSubset(of: Set(capabilities))
+    }
+}
+
+enum LabSessionMode: String, Codable {
+    case interactive
+    case deterministic
+}
+
+struct FlyGymSessionControlPacket: Codable {
+    var type: String = "session_control"
+    var protocolVersion: Int = FlyGymProtocolV4.version
+    var sessionID: String
+    var epoch: Int
+    var seq: Int
+    var simTick: Int
+    var action: String
+    var mode: LabSessionMode
+    var resetScope: [String]? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case type, epoch, seq, action, mode
+        case protocolVersion = "protocol_version"
+        case sessionID = "session_id"
+        case simTick = "sim_tick"
+        case resetScope = "reset_scope"
+    }
+}
+
+struct FlyGymSessionStatePacket: Decodable, FlyGymStampedPacket {
+    var type: String = "session_state"
+    var protocolVersion: Int = 0
+    var sessionID: String = ""
+    var epoch: Int = 0
+    var seq: Int = 0
+    var simTick: Int = 0
+    var mode: LabSessionMode = .interactive
+    var state: String = ""
+    var ok: Bool = false
+    var error: String?
+    var receivedAt: Date = Date()
+    var connectionGeneration: UInt64 = 0
+
+    enum CodingKeys: String, CodingKey {
+        case type, epoch, seq, mode, state, ok, error
+        case protocolVersion = "protocol_version"
+        case sessionID = "session_id"
+        case simTick = "sim_tick"
+    }
+}
+
+struct FlyGymExperimentStepPacket: Codable {
+    var type: String = "experiment_step"
+    var protocolVersion: Int = FlyGymProtocolV4.version
+    var sessionID: String
+    var epoch: Int
+    var seq: Int
+    var simTick: Int
+    var quantumTicks: Int = FlyGymProtocolV4.experimentQuantumTicks
+    var brain: FlyGymBrainPacket
+
+    enum CodingKeys: String, CodingKey {
+        case type, epoch, seq, brain
+        case protocolVersion = "protocol_version"
+        case sessionID = "session_id"
+        case simTick = "sim_tick"
+        case quantumTicks = "quantum_ticks"
+    }
+}
+
+struct FlyGymExperimentStepResultPacket: Decodable, FlyGymStampedPacket {
+    var type: String = "experiment_step_result"
+    var protocolVersion: Int = 0
+    var sessionID: String = ""
+    var epoch: Int = 0
+    var seq: Int = 0
+    var simTick: Int = 0
+    var endSimTick: Int = 0
+    var ok: Bool = false
+    var error: String?
+    var body: FlyGymBodyPacket = FlyGymBodyPacket()
+    var receivedAt: Date = Date()
+    var connectionGeneration: UInt64 = 0
+
+    enum CodingKeys: String, CodingKey {
+        case type, epoch, seq, ok, error, body
+        case protocolVersion = "protocol_version"
+        case sessionID = "session_id"
+        case simTick = "sim_tick"
+        case endSimTick = "end_sim_tick"
+    }
+}
+
 /// Body -> brain. Tolerant parse: unknown fields ignored, missing fields get
 /// defaults, out-of-range values clamped. Never throws out of the bridge.
 struct FlyGymBodyPacket: Decodable {
@@ -80,6 +200,8 @@ struct FlyGymBodyPacket: Decodable {
     var odorLeft: Double = 0
     var odorRight: Double = 0
     var nearestFoodDistanceMm: Double?
+    var positionXmm: Double = 0
+    var positionYmm: Double = 0
     var headingRad: Double = 0
     var bearing: Double = 0
 
@@ -98,6 +220,7 @@ struct FlyGymBodyPacket: Decodable {
         case flashLeft = "flash_left", flashRight = "flash_right"
         case odorLeft = "odor_left", odorRight = "odor_right"
         case nearestFoodDistanceMm = "nearest_food_distance_mm"
+        case positionXmm = "position_x_mm", positionYmm = "position_y_mm"
         case headingRad = "heading_rad"
     }
     init() {}
@@ -155,6 +278,10 @@ struct FlyGymBodyPacket: Decodable {
            d.isFinite {
             nearestFoodDistanceMm = min(1_000_000.0, max(0.0, d))
         } else { nearestFoodDistanceMm = nil }
+        let xRaw = (try? c.decodeIfPresent(Double.self, forKey: .positionXmm)) ?? 0
+        positionXmm = xRaw.isFinite ? min(1_000_000.0, max(-1_000_000.0, xRaw)) : 0
+        let yRaw = (try? c.decodeIfPresent(Double.self, forKey: .positionYmm)) ?? 0
+        positionYmm = yRaw.isFinite ? min(1_000_000.0, max(-1_000_000.0, yRaw)) : 0
         let headingRaw = (try? c.decodeIfPresent(Double.self, forKey: .headingRad)) ?? 0
         headingRad = headingRaw.isFinite ? min(Double.pi, max(-Double.pi, headingRaw)) : 0
         bearing = min(1.0, max(-1.0, (try? c.decodeIfPresent(Double.self, forKey: .bearing)) ?? 0))
@@ -188,6 +315,24 @@ func parseLabEventLine(_ line: Data) -> LabEventNotice? {
     guard let tag = try? JSONDecoder().decode(FlyGymTaggedLine.self, from: line),
           tag.type == "lab_event" else { return nil }
     return try? JSONDecoder().decode(LabEventNotice.self, from: line)
+}
+
+func parseHelloLine(_ line: Data) -> FlyGymHelloPacket? {
+    guard let tag = try? JSONDecoder().decode(FlyGymTaggedLine.self, from: line),
+          tag.type == "hello" else { return nil }
+    return try? JSONDecoder().decode(FlyGymHelloPacket.self, from: line)
+}
+
+func parseSessionStateLine(_ line: Data) -> FlyGymSessionStatePacket? {
+    guard let tag = try? JSONDecoder().decode(FlyGymTaggedLine.self, from: line),
+          tag.type == "session_state" else { return nil }
+    return try? JSONDecoder().decode(FlyGymSessionStatePacket.self, from: line)
+}
+
+func parseExperimentStepResultLine(_ line: Data) -> FlyGymExperimentStepResultPacket? {
+    guard let tag = try? JSONDecoder().decode(FlyGymTaggedLine.self, from: line),
+          tag.type == "experiment_step_result" else { return nil }
+    return try? JSONDecoder().decode(FlyGymExperimentStepResultPacket.self, from: line)
 }
 
 struct FlyGymBodyFeedback: FlyGymStampedPacket {
@@ -225,6 +370,8 @@ struct FlyGymBodyFeedback: FlyGymStampedPacket {
     var odorLeft: Double = 0
     var odorRight: Double = 0
     var nearestFoodDistanceMm: Double?
+    var positionXmm: Double = 0
+    var positionYmm: Double = 0
     var headingRad: Double = 0
     var bearing: Double = 0
     var receivedAt: Date = Date()
@@ -247,6 +394,7 @@ struct FlyGymBodyFeedback: FlyGymStampedPacket {
         flashLeft = p.flashLeft; flashRight = p.flashRight
         odorLeft = p.odorLeft; odorRight = p.odorRight
         nearestFoodDistanceMm = p.nearestFoodDistanceMm
+        positionXmm = p.positionXmm; positionYmm = p.positionYmm
         headingRad = p.headingRad; bearing = p.bearing
     }
     init() {}
@@ -319,6 +467,8 @@ fileprivate enum FlyGymSendLane: Int {
     case brain = 0
     case escape = 1
     case lab = 2
+    case control = 3
+    case experimentStep = 4
 }
 
 fileprivate struct FlyGymPendingSend {
@@ -329,6 +479,12 @@ fileprivate struct FlyGymPendingSend {
 // MARK: - TCP client (POSIX, background threads only)
 
 final class FlyGymBridge {
+    /// Maximum bytes allowed for one unterminated inbound JSON line. V4 lab
+    /// state can legitimately be much larger than the old 64 KiB assumption
+    /// because it carries the authoritative object list for the preallocated
+    /// world. Keep a hard bound so a malformed peer still cannot grow memory
+    /// without limit.
+    private let maxInboundLineBytes = 512 * 1024
     let host: String
     let port: UInt16
     /// Minimum interval between brain packets on the wire (~66 Hz cap).
@@ -349,7 +505,10 @@ final class FlyGymBridge {
     private var pending: Data?          // latest unsent brain line (bounded: 1)
     private var pendingEscape: Data?    // bounded pulse lane: escape cannot be coalesced away
     private var pendingLab: [Data] = [] // ordered lab commands (bounded FIFO, cap 32)
+    private var pendingControl: [Data] = []
+    private var pendingExperimentStep: Data?
     private let labQueueCap = 32
+    private let controlQueueCap = 16
     private var pendingCount = 0        // packets coalesced since last send
     private var droppedCoalesced: Int = 0
     private var droppedLab: Int = 0
@@ -357,6 +516,14 @@ final class FlyGymBridge {
     private var _latestLabState: LabRemoteState?
     private var _latestLabAck: LabAck?
     private var _latestLabEvent: LabEventNotice?
+    private var _serverHello: FlyGymHelloPacket?
+    private var _latestSessionState: FlyGymSessionStatePacket?
+    private var _latestExperimentStepResult: FlyGymExperimentStepResultPacket?
+    private var requestedSessionID: String?
+    private var requestedEpoch: Int?
+    private var requestedSessionMode: LabSessionMode?
+    private var outstandingExperimentStepSeq: Int?
+    private var nextSessionControlSeq = 1
     private var nextLabID = 1
     private var lastSend = Date.distantPast
     private var lastNormalBrainSendAt = Date.distantPast
@@ -368,6 +535,10 @@ final class FlyGymBridge {
     private(set) var connectAttempts = 0
     private(set) var labSentCount = 0
     private(set) var labRecvCount = 0
+    private(set) var controlSentCount = 0
+    private(set) var experimentStepSentCount = 0
+    private(set) var experimentStepRecvCount = 0
+    private(set) var staleSessionPacketCount = 0
 
     init(host: String = "127.0.0.1", port: UInt16 = 17841) {
         self.host = host; self.port = port
@@ -377,6 +548,33 @@ final class FlyGymBridge {
     var connectionGeneration: UInt64 { lock.lock(); defer { lock.unlock() }; return _connectionGeneration }
     var coalescedDropped: Int { lock.lock(); defer { lock.unlock() }; return droppedCoalesced }
     var labDropped: Int { lock.lock(); defer { lock.unlock() }; return droppedLab }
+    var deterministicV4Available: Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard _connected, let hello = _serverHello,
+              hello.connectionGeneration == _connectionGeneration else { return false }
+        return hello.supportsDeterministicV4
+    }
+
+    func serverHello() -> FlyGymHelloPacket? {
+        lock.lock(); defer { lock.unlock() }
+        guard let hello = _serverHello, _connected,
+              hello.connectionGeneration == _connectionGeneration else { return nil }
+        return hello
+    }
+
+    func latestSessionState() -> FlyGymSessionStatePacket? {
+        lock.lock(); defer { lock.unlock() }
+        guard let state = _latestSessionState, _connected,
+              state.connectionGeneration == _connectionGeneration else { return nil }
+        return state
+    }
+
+    func latestExperimentStepResult() -> FlyGymExperimentStepResultPacket? {
+        lock.lock(); defer { lock.unlock() }
+        guard let result = _latestExperimentStepResult, _connected,
+              result.connectionGeneration == _connectionGeneration else { return nil }
+        return result
+    }
 
     private func freshnessLocked(receivedAt: Date?, packetGeneration: UInt64?,
                                  maxAge: TimeInterval, now: Date = Date()) -> FlyGymPacketFreshness {
@@ -554,6 +752,85 @@ final class FlyGymBridge {
         lock.unlock()
     }
 
+    private func encodeLine<T: Encodable>(_ packet: T) -> Data? {
+        guard var data = try? JSONEncoder().encode(packet) else { return nil }
+        data.append(0x0A)
+        return data
+    }
+
+    /// V4 session control shares the background sender but has its own bounded
+    /// ordered lane so pause/resume/handshake traffic cannot be coalesced with
+    /// ordinary brain state.
+    @discardableResult
+    func sendSessionControl(action: String, sessionID: String, epoch: Int,
+                            simTick: Int, mode: LabSessionMode,
+                            resetScope: [String]? = nil) -> Int? {
+        lock.lock()
+        let seq = nextSessionControlSeq
+        nextSessionControlSeq = nextSessionControlSeq == Int.max ? 1 : nextSessionControlSeq + 1
+        lock.unlock()
+        let packet = FlyGymSessionControlPacket(sessionID: sessionID,
+                                               epoch: max(1, epoch), seq: seq,
+                                               simTick: max(0, simTick),
+                                               action: action, mode: mode,
+                                               resetScope: resetScope)
+        guard let data = encodeLine(packet) else { return nil }
+        lock.lock()
+        defer { lock.unlock() }
+        guard pendingControl.count < controlQueueCap else { return nil }
+        if action == "begin" {
+            requestedSessionID = sessionID
+            requestedEpoch = max(1, epoch)
+            requestedSessionMode = mode
+            _latestSessionState = nil
+            _latestExperimentStepResult = nil
+            _latestBody = nil
+            _latestLabState = nil
+            _latestLabAck = nil
+            _latestLabEvent = nil
+            lastBodyAt = nil
+            bodyIntervals.removeAll(keepingCapacity: true)
+            outstandingExperimentStepSeq = nil
+            pendingExperimentStep = nil
+        } else if action == "reset", requestedSessionID == sessionID {
+            // Reset is the one lifecycle control that intentionally changes the
+            // simulation epoch. Promote the expected epoch before the packet is
+            // sent so the matching reset confirmation can never be mistaken for
+            // delayed old-epoch traffic on the same TCP generation.
+            requestedEpoch = max(1, epoch)
+            _latestSessionState = nil
+            _latestExperimentStepResult = nil
+            _latestBody = nil
+            _latestLabState = nil
+            _latestLabAck = nil
+            _latestLabEvent = nil
+            lastBodyAt = nil
+            bodyIntervals.removeAll(keepingCapacity: true)
+            outstandingExperimentStepSeq = nil
+            pendingExperimentStep = nil
+        }
+        pendingControl.append(data)
+        return seq
+    }
+
+    /// Queue exactly one deterministic body quantum. `false` means an earlier
+    /// request is still pending/outstanding; callers must wait for its result.
+    func sendExperimentStep(sessionID: String, epoch: Int, seq: Int,
+                            simTick: Int, signals: BrainSignals) -> Bool {
+        let packet = FlyGymExperimentStepPacket(
+            sessionID: sessionID, epoch: max(1, epoch), seq: seq,
+            simTick: max(0, simTick),
+            brain: FlyGymBrainPacket(signals: signals, simMs: max(0, simTick)))
+        guard let data = encodeLine(packet) else { return false }
+        lock.lock(); defer { lock.unlock() }
+        guard _connected,
+              requestedSessionID == sessionID, requestedEpoch == max(1, epoch),
+              pendingExperimentStep == nil, outstandingExperimentStepSeq == nil else { return false }
+        pendingExperimentStep = data
+        outstandingExperimentStepSeq = seq
+        return true
+    }
+
     /// Enqueue one ordered experiment command. AppKit calls this directly; it
     /// performs only JSON encoding and a bounded in-memory append.
     @discardableResult
@@ -564,7 +841,9 @@ final class FlyGymBridge {
                  value: Double? = nil, directionDeg: Double? = nil,
                  endDistance: Double? = nil, physical: Bool? = nil,
                  sensory: Bool? = nil, continuous: Bool? = nil,
-                 mode: String? = nil) -> Int {
+                 mode: String? = nil,
+                 protocolVersion: Int? = nil, sessionID: String? = nil,
+                 epoch: Int? = nil, requestedTick: Int? = nil) -> Int {
         lock.lock()
         let id = nextLabID
         nextLabID = nextLabID == Int.max ? 1 : nextLabID + 1
@@ -574,13 +853,31 @@ final class FlyGymBridge {
                              strength: strength, durationMs: durationMs, value: value,
                              directionDeg: directionDeg, endDistance: endDistance,
                              physical: physical, sensory: sensory,
-                             continuous: continuous, mode: mode)
+                             continuous: continuous, mode: mode,
+                             protocolVersion: protocolVersion, sessionID: sessionID,
+                             epoch: epoch, requestedTick: requestedTick)
         guard let line = try? JSONEncoder().encode(cmd) else { return id }
         var data = line; data.append(0x0A)
         lock.lock()
         if pendingLab.count >= labQueueCap {
-            pendingLab.removeFirst()
-            droppedLab += 1
+            if protocolVersion ?? 0 >= FlyGymProtocolV4.version {
+                // V4 discrete experiment mutations fail closed. Never evict an
+                // older command and later make the new one look successfully
+                // queued; surface a local explicit failure ACK instead.
+                droppedLab += 1
+                _latestLabAck = LabAck(type: "lab_ack", id: id, ok: false,
+                                       action: action, message: "local lab command queue full",
+                                       appliedTick: nil, appliedEpoch: nil,
+                                       status: "queue_full", sessionID: sessionID,
+                                       epoch: epoch, simTick: requestedTick,
+                                       receivedAt: Date(),
+                                       connectionGeneration: _connectionGeneration)
+                lock.unlock()
+                return id
+            } else {
+                pendingLab.removeFirst()
+                droppedLab += 1
+            }
         }
         pendingLab.append(data)
         lock.unlock()
@@ -590,7 +887,8 @@ final class FlyGymBridge {
     // -- test hook: one latest-state slot + one escape-pulse slot.
     func pendingDepth() -> Int {
         lock.lock(); defer { lock.unlock() }
-        return (pending == nil ? 0 : 1) + (pendingEscape == nil ? 0 : 1) + pendingLab.count
+        return (pending == nil ? 0 : 1) + (pendingEscape == nil ? 0 : 1)
+            + pendingLab.count + pendingControl.count + (pendingExperimentStep == nil ? 0 : 1)
     }
 
 
@@ -601,8 +899,39 @@ final class FlyGymBridge {
         _latestLabState = nil
         _latestLabAck = nil
         _latestLabEvent = nil
+        _serverHello = nil
+        _latestSessionState = nil
+        _latestExperimentStepResult = nil
+        outstandingExperimentStepSeq = nil
+        pendingExperimentStep = nil
         lastBodyAt = nil
         bodyIntervals.removeAll(keepingCapacity: true)
+    }
+
+    /// V4 deterministic packets must carry the complete simulation identity.
+    /// Interactive sessions keep tolerant legacy parsing so a V3-compatible peer
+    /// can still acknowledge ordinary UI commands without V4 envelope fields.
+    private func matchesRequestedSessionLocked(sessionID: String?, epoch: Int?) -> Bool {
+        guard let expectedSession = requestedSessionID else { return true }
+        let expectedEpoch = requestedEpoch
+        if requestedSessionMode == .deterministic {
+            return sessionID == expectedSession && epoch == expectedEpoch
+        }
+        if let sessionID, sessionID != expectedSession { return false }
+        if let epoch, epoch != expectedEpoch { return false }
+        return true
+    }
+
+    private func recordDroppedLabLocked(_ data: Data, reason: String) {
+        guard let command = try? JSONDecoder().decode(LabCommand.self, from: data),
+              command.protocolVersion ?? 0 >= FlyGymProtocolV4.version else { return }
+        _latestLabAck = LabAck(type: "lab_ack", id: command.id, ok: false,
+                               action: command.action, message: reason,
+                               appliedTick: nil, appliedEpoch: nil,
+                               status: "queue_full", sessionID: command.sessionID,
+                               epoch: command.epoch, simTick: command.requestedTick,
+                               receivedAt: Date(),
+                               connectionGeneration: _connectionGeneration)
     }
 
     private func beginConnectionLocked(_ fd: Int32) {
@@ -611,6 +940,10 @@ final class FlyGymBridge {
         _connectionGeneration &+= 1
         if _connectionGeneration == 0 { _connectionGeneration = 1 }
         clearRemoteStateLocked()
+        pendingControl.removeAll(keepingCapacity: true)
+        if let hello = encodeLine(FlyGymHelloPacket()) {
+            pendingControl.append(hello)
+        }
         lastSend = .distantPast
         lastNormalBrainSendAt = .distantPast
     }
@@ -620,6 +953,21 @@ final class FlyGymBridge {
     }
 
     private func dequeueNextLocked(now: Date) -> FlyGymPendingSend? {
+        if !pendingControl.isEmpty {
+            return FlyGymPendingSend(lane: .control, data: pendingControl.removeFirst())
+        }
+        // A deterministic step defines an application boundary. Any lab command
+        // already queued by Swift before that step reservation must reach Python
+        // first; otherwise the step lane could overtake a requested-tick command
+        // and force it to apply one quantum late. Wall time may slow down here —
+        // deterministic experiment order must not.
+        if pendingExperimentStep != nil, !pendingLab.isEmpty {
+            return FlyGymPendingSend(lane: .lab, data: pendingLab.removeFirst())
+        }
+        if let step = pendingExperimentStep {
+            pendingExperimentStep = nil
+            return FlyGymPendingSend(lane: .experimentStep, data: step)
+        }
         if let urgent = pendingEscape {
             pendingEscape = nil
             return FlyGymPendingSend(lane: .escape, data: urgent)
@@ -646,18 +994,95 @@ final class FlyGymBridge {
         case .lab:
             pendingLab.insert(item.data, at: 0)
             if pendingLab.count > labQueueCap {
-                pendingLab.removeLast()
+                let dropped = pendingLab.removeLast()
                 droppedLab += 1
+                recordDroppedLabLocked(dropped, reason: "local lab command queue full while retrying send")
             }
         case .brain:
             // If a newer latest-state packet arrived while send() was running,
             // keep the newer packet rather than restoring an obsolete snapshot.
             if pending == nil { pending = item.data }
+        case .control:
+            pendingControl.insert(item.data, at: 0)
+            if pendingControl.count > controlQueueCap { pendingControl.removeLast() }
+        case .experimentStep:
+            if pendingExperimentStep == nil { pendingExperimentStep = item.data }
         }
     }
 
     private func acceptInboundLine(_ line: Data, fd: Int32, generation: UInt64,
                                    receivedAt: Date = Date()) -> Bool {
+        if var hello = parseHelloLine(line) {
+            hello.receivedAt = receivedAt
+            hello.connectionGeneration = generation
+            lock.lock()
+            guard currentConnectionLocked(fd: fd, generation: generation) else {
+                lock.unlock(); return true
+            }
+            _serverHello = hello
+            lock.unlock()
+            return true
+        }
+        if var session = parseSessionStateLine(line) {
+            session.receivedAt = receivedAt
+            session.connectionGeneration = generation
+            lock.lock()
+            guard currentConnectionLocked(fd: fd, generation: generation) else {
+                lock.unlock(); return true
+            }
+            if let expected = requestedSessionID {
+                let wrongSession = session.sessionID != expected
+                let wrongEpoch = requestedEpoch.map { session.epoch != $0 } ?? false
+                if wrongSession || wrongEpoch {
+                    staleSessionPacketCount += 1
+                    lock.unlock(); return true
+                }
+            }
+            _latestSessionState = session
+            lock.unlock()
+            return true
+        }
+        if var result = parseExperimentStepResultLine(line) {
+            result.receivedAt = receivedAt
+            result.connectionGeneration = generation
+            var fb: FlyGymBodyFeedback?
+            if result.ok {
+                var value = FlyGymBodyFeedback(result.body)
+                value.receivedAt = receivedAt
+                value.connectionGeneration = generation
+                fb = value
+            }
+            lock.lock()
+            guard currentConnectionLocked(fd: fd, generation: generation) else {
+                lock.unlock(); return true
+            }
+            let expectedSession = requestedSessionID
+            let expectedEpoch = requestedEpoch
+            let expectedSeq = outstandingExperimentStepSeq
+            guard expectedSession == result.sessionID,
+                  expectedEpoch == result.epoch,
+                  expectedSeq == result.seq else {
+                staleSessionPacketCount += 1
+                lock.unlock(); return true
+            }
+            _latestExperimentStepResult = result
+            outstandingExperimentStepSeq = nil
+            experimentStepRecvCount += 1
+            if let fb {
+                if let prev = lastBodyAt {
+                    let interval = receivedAt.timeIntervalSince(prev)
+                    if interval > 0 {
+                        bodyIntervals.append(interval)
+                        if bodyIntervals.count > 120 { bodyIntervals.removeFirst(bodyIntervals.count - 120) }
+                    }
+                }
+                lastBodyAt = receivedAt
+                _latestBody = fb
+                recvCount += 1
+            }
+            lock.unlock()
+            return true
+        }
         if let pkt = parseBodyLine(line) {
             var fb = FlyGymBodyFeedback(pkt)
             fb.receivedAt = receivedAt
@@ -686,6 +1111,10 @@ final class FlyGymBridge {
             guard currentConnectionLocked(fd: fd, generation: generation) else {
                 lock.unlock(); return true
             }
+            if !matchesRequestedSessionLocked(sessionID: state.sessionID, epoch: state.epoch) {
+                staleSessionPacketCount += 1
+                lock.unlock(); return true
+            }
             _latestLabState = state
             labRecvCount += 1
             if let ackID = state.ack {
@@ -693,6 +1122,12 @@ final class FlyGymBridge {
                                        ok: state.ok ?? (state.error == nil),
                                        action: state.lastAction ?? "",
                                        message: state.error ?? "ok",
+                                       appliedTick: state.appliedTick,
+                                       appliedEpoch: state.appliedEpoch,
+                                       status: state.status,
+                                       sessionID: state.sessionID,
+                                       epoch: state.epoch,
+                                       simTick: state.simTick,
                                        receivedAt: receivedAt,
                                        connectionGeneration: generation)
             }
@@ -704,6 +1139,10 @@ final class FlyGymBridge {
             ack.connectionGeneration = generation
             lock.lock()
             guard currentConnectionLocked(fd: fd, generation: generation) else {
+                lock.unlock(); return true
+            }
+            if !matchesRequestedSessionLocked(sessionID: ack.sessionID, epoch: ack.epoch) {
+                staleSessionPacketCount += 1
                 lock.unlock(); return true
             }
             _latestLabAck = ack
@@ -740,6 +1179,18 @@ final class FlyGymBridge {
         let generation = _connectionGeneration
         lock.unlock()
         return acceptInboundLine(line, fd: fd, generation: generation, receivedAt: receivedAt)
+    }
+
+    /// Test hook for the exact production line-framing path. The caller owns
+    /// `buffer`, which lets tests feed the same JSON line in recv()-sized chunks.
+    fileprivate func receiveBytesForTesting(_ chunk: Data, buffer: inout Data,
+                                             at receivedAt: Date = Date()) {
+        lock.lock()
+        let fd = sock
+        let generation = _connectionGeneration
+        lock.unlock()
+        buffer.append(chunk)
+        drainInboundBuffer(&buffer, fd: fd, generation: generation, receivedAt: receivedAt)
     }
 
     fileprivate func disconnectForTesting() {
@@ -828,8 +1279,19 @@ final class FlyGymBridge {
                 lock.lock()
                 if sent == d.count {
                     let sentAt = Date()
-                    if item.lane == .lab { labSentCount += 1 } else { sentCount += 1 }
-                    if item.lane == .brain { lastNormalBrainSendAt = sentAt }
+                    switch item.lane {
+                    case .brain:
+                        sentCount += 1
+                        lastNormalBrainSendAt = sentAt
+                    case .escape:
+                        sentCount += 1
+                    case .lab:
+                        labSentCount += 1
+                    case .control:
+                        controlSentCount += 1
+                    case .experimentStep:
+                        experimentStepSentCount += 1
+                    }
                     lastSend = sentAt
                 }
                 else {
@@ -860,6 +1322,42 @@ final class FlyGymBridge {
         }
     }
 
+    /// Split newline-delimited protocol frames, route complete lines through the
+    /// production parser/arbitration path, and bound malformed partial input.
+    private func drainInboundBuffer(_ buf: inout Data, fd: Int32, generation: UInt64,
+                                    receivedAt: Date = Date()) {
+        while let nl = buf.firstIndex(of: 0x0A) {
+            let lineLength = buf.distance(from: buf.startIndex, to: nl)
+            if lineLength > maxInboundLineBytes {
+                buf.removeSubrange(buf.startIndex...nl)
+                lock.lock()
+                if currentConnectionLocked(fd: fd, generation: generation) {
+                    malformedCount += 1
+                }
+                lock.unlock()
+                continue
+            }
+            let line = buf.subdata(in: buf.startIndex..<nl)
+            buf.removeSubrange(buf.startIndex...nl)
+            if line.isEmpty { continue }
+            if !acceptInboundLine(line, fd: fd, generation: generation, receivedAt: receivedAt) {
+                lock.lock()
+                if currentConnectionLocked(fd: fd, generation: generation) {
+                    malformedCount += 1
+                }
+                lock.unlock()
+            }
+        }
+        if buf.count > maxInboundLineBytes {
+            buf.removeAll(keepingCapacity: true)
+            lock.lock()
+            if currentConnectionLocked(fd: fd, generation: generation) {
+                malformedCount += 1
+            }
+            lock.unlock()
+        }
+    }
+
     private func recvLoop() {
         var buf = Data()
         var bufferFD: Int32 = -1
@@ -887,19 +1385,7 @@ final class FlyGymBridge {
             let n = Darwin.recv(fd, tmp, 4096, 0)
             if n > 0 {
                 buf.append(tmp, count: n)
-                while let nl = buf.firstIndex(of: 0x0A) {
-                    let line = buf.subdata(in: buf.startIndex..<nl)
-                    buf.removeSubrange(buf.startIndex...nl)
-                    if line.isEmpty { continue }
-                    if !acceptInboundLine(line, fd: fd, generation: generation) {
-                        lock.lock()
-                        if currentConnectionLocked(fd: fd, generation: generation) {
-                            malformedCount += 1
-                        }
-                        lock.unlock()
-                    }
-                }
-                if buf.count > 65536 { buf.removeAll() }   // malformed flood guard
+                drainInboundBuffer(&buf, fd: fd, generation: generation)
             } else if n == 0 {
                 markDown(fd, generation: generation); buf.removeAll() // orderly close -> reconnect
                 bufferFD = -1; bufferGeneration = 0
@@ -936,7 +1422,7 @@ func runBridgeTest() {
         && (obj["backward"] as? Bool) == true
         && abs((obj["t"] as? Double ?? -1) - 1.234) < 1e-9)
     // 2/6. body parse of a well-formed line.
-    let line = #"{"type":"body","t":1.238,"sim_dt":0.002,"wall_dt":0.020,"sim_wall_ratio":0.1,"controller_left":0.21,"controller_right":0.43,"wind_strength":0.7,"wind_direction_deg":-30,"wind_sensory":true,"touch_strength":0.55,"touch_sensory":true,"vx":0.013,"yaw_rate":-0.12,"contacts":[1,1,0,0,1,0],"left_contact":0.67,"right_contact":0.33,"loom_left":0.7,"loom_right":0.2,"brightness":0.4,"odor_left":0.75,"odor_right":0.2,"nearest_food_distance_mm":12.5,"heading_rad":1.25,"bearing":0.5}"#
+    let line = #"{"type":"body","t":1.238,"sim_dt":0.002,"wall_dt":0.020,"sim_wall_ratio":0.1,"controller_left":0.21,"controller_right":0.43,"wind_strength":0.7,"wind_direction_deg":-30,"wind_sensory":true,"touch_strength":0.55,"touch_sensory":true,"vx":0.013,"yaw_rate":-0.12,"contacts":[1,1,0,0,1,0],"left_contact":0.67,"right_contact":0.33,"loom_left":0.7,"loom_right":0.2,"brightness":0.4,"odor_left":0.75,"odor_right":0.2,"nearest_food_distance_mm":12.5,"position_x_mm":14.5,"position_y_mm":-3.25,"heading_rad":1.25,"bearing":0.5}"#
     let body = parseBodyLine(Data(line.utf8))
     check("body parse", body != nil && abs((body?.vx ?? 9) - 0.013) < 1e-9
         && abs((body?.t ?? -1) - 1.238) < 1e-9
@@ -956,6 +1442,8 @@ func runBridgeTest() {
         && abs((body?.odorLeft ?? -1) - 0.75) < 1e-9
         && abs((body?.odorRight ?? -1) - 0.2) < 1e-9
         && abs((body?.nearestFoodDistanceMm ?? -1) - 12.5) < 1e-9
+        && abs((body?.positionXmm ?? -999) - 14.5) < 1e-9
+        && abs((body?.positionYmm ?? 999) + 3.25) < 1e-9
         && abs((body?.headingRad ?? -9) - 1.25) < 1e-9)
     // 7. clamping.
     let wild = #"{"type":"body","sim_dt":99,"wall_dt":-3,"sim_wall_ratio":9999,"vx":99,"yaw_rate":-99,"contacts":[9,-9,2,2,2,2,2,2],"left_contact":5,"right_contact":-5,"loom_left":9,"loom_right":-2,"brightness":7,"odor_left":9,"odor_right":-2,"nearest_food_distance_mm":-4,"heading_rad":99,"bearing":-9}"#
@@ -1002,7 +1490,9 @@ func runBridgeTest() {
               && abs(freshOdor.windStrength - 0.7) < 1e-9
               && freshOdor.windSensory
               && abs(freshOdor.touchStrength - 0.55) < 1e-9
-              && freshOdor.touchSensory)
+              && freshOdor.touchSensory
+              && abs(freshOdor.positionXmm - 14.5) < 1e-9
+              && abs(freshOdor.positionYmm + 3.25) < 1e-9)
         freshOdor.receivedAt = Date()
         let o = FlyGymSensoryMap.foodOdor(body: freshOdor)
         check("fresh food odor maps", abs(o.l - 0.75) < 1e-6 && abs(o.r - 0.2) < 1e-6)
@@ -1066,6 +1556,81 @@ func runBridgeTest() {
           && (ackFresh.ageSeconds ?? 9) < 0.2
           && (eventFresh.ageSeconds ?? 9) < 0.2)
 
+    // Large V4 world states used to be at risk of being discarded by the old
+    // 64 KiB recv buffer guard. Exercise the exact production line-framing +
+    // inbound arbitration path with all 224 default object slots and long IDs,
+    // split into recv()-sized chunks.
+    let largeStateBridge = FlyGymBridge()
+    _ = largeStateBridge.beginConnectionForTesting()
+    var largeObjects: [[String: Any]] = []
+    let shapeCounts: [(String, Int)] = [("box", 64), ("sphere", 64), ("wall", 64), ("food", 32)]
+    for (shape, count) in shapeCounts {
+        for i in 0..<count {
+            let longID = "\(shape)_\(i)_" + String(repeating: "object-id-padding-", count: 12)
+            let size: [Double]
+            switch shape {
+            case "wall": size = [2.0, 30.0, 15.0]
+            case "sphere", "food": size = [5.0, 5.0, 5.0]
+            default: size = [10.0, 12.0, 8.0]
+            }
+            largeObjects.append([
+                "id": longID,
+                "shape": shape,
+                "position_mm": [Double(i), Double(-i), size[2] * 0.5],
+                "size_mm": size,
+                "yaw_deg": Double(i % 36) * 10.0,
+            ])
+        }
+    }
+    let largeStateJSON: [String: Any] = [
+        "type": "lab_state",
+        "t": 12.5,
+        "object_count": largeObjects.count,
+        "state": [
+            "objects": largeObjects,
+            "slot_capacity": ["box": 64, "sphere": 64, "wall": 64, "food": 32],
+            "slot_free": ["box": 0, "sphere": 0, "wall": 0, "food": 0],
+        ] as [String: Any],
+    ]
+    var largeFrame = (try? JSONSerialization.data(withJSONObject: largeStateJSON)) ?? Data()
+    let largePayloadBytes = largeFrame.count
+    largeFrame.append(0x0A)
+    var largeRecvBuffer = Data()
+    var offset = 0
+    while offset < largeFrame.count {
+        let end = min(offset + 4096, largeFrame.count)
+        largeStateBridge.receiveBytesForTesting(largeFrame.subdata(in: offset..<end),
+                                                buffer: &largeRecvBuffer,
+                                                at: recvNow)
+        offset = end
+    }
+    let receivedLargeState = largeStateBridge.latestLabState()
+    check("large lab_state exceeds historical 64 KiB guard",
+          largePayloadBytes > 65_536 && largePayloadBytes < 512 * 1024,
+          "bytes=\(largePayloadBytes)")
+    check("224-object lab_state survives recv framing",
+          largeRecvBuffer.isEmpty
+          && receivedLargeState?.authoritativeObjects?.count == 224
+          && receivedLargeState?.authoritativeSlotCapacity?["food"] == 32
+          && receivedLargeState?.authoritativeSlotFree?["box"] == 0,
+          "bytes=\(largePayloadBytes) objects=\(receivedLargeState?.authoritativeObjects?.count ?? -1)")
+
+    // The larger legitimate limit must still be a real bound. An unterminated
+    // line over 512 KiB is discarded and counted instead of growing forever.
+    let malformedBeforeFlood = largeStateBridge.malformedCount
+    var floodOffset = 0
+    let flood = Data(repeating: 0x78, count: 512 * 1024 + 1)
+    while floodOffset < flood.count {
+        let end = min(floodOffset + 4096, flood.count)
+        largeStateBridge.receiveBytesForTesting(flood.subdata(in: floodOffset..<end),
+                                                buffer: &largeRecvBuffer,
+                                                at: recvNow)
+        floodOffset = end
+    }
+    check("recv flood guard remains bounded",
+          largeRecvBuffer.isEmpty && largeStateBridge.malformedCount == malformedBeforeFlood + 1,
+          "buffer=\(largeRecvBuffer.count) malformed=\(largeStateBridge.malformedCount - malformedBeforeFlood)")
+
     freshBridge.disconnectForTesting()
     check("disconnect clears remote state",
           !freshBridge.connected && freshBridge.latestBody() == nil
@@ -1096,6 +1661,77 @@ func runBridgeTest() {
           && freshBridge.latestLabAck(maxAge: 1) == nil
           && freshBridge.latestLabEvent(maxAge: 1) == nil)
 
+    // V4 deterministic session identity is mandatory on state/ACK packets. A
+    // legacy untagged ACK or delayed old-epoch ACK must never replace the current
+    // authoritative result merely because it arrived on the current TCP socket.
+    let v4Filter = FlyGymBridge()
+    let v4Gen1 = v4Filter.beginConnectionForTesting()
+    _ = v4Filter.sendSessionControl(action: "begin", sessionID: "strict-v4",
+                                    epoch: 2, simTick: 0, mode: .deterministic)
+    let staleBefore = v4Filter.staleSessionPacketCount
+    _ = v4Filter.receiveLineForTesting(Data(#"{"type":"lab_ack","id":31,"ok":true,"action":"touch","message":"legacy"}"#.utf8))
+    _ = v4Filter.receiveLineForTesting(Data(#"{"type":"lab_ack","id":32,"ok":true,"action":"touch","message":"old","session_id":"strict-v4","epoch":1,"applied_epoch":1,"applied_tick":0}"#.utf8))
+    check("deterministic ACK requires current session + epoch",
+          v4Filter.latestLabAck() == nil
+          && v4Filter.staleSessionPacketCount == staleBefore + 2)
+    _ = v4Filter.receiveLineForTesting(Data(#"{"type":"lab_ack","id":33,"ok":true,"action":"touch","message":"ok","status":"applied","session_id":"strict-v4","epoch":2,"applied_epoch":2,"applied_tick":0,"sim_tick":0}"#.utf8))
+    check("current-epoch deterministic ACK accepted",
+          v4Filter.latestLabAck()?.id == 33 && v4Filter.latestLabAck()?.appliedEpoch == 2)
+    _ = v4Filter.sendSessionControl(action: "reset", sessionID: "strict-v4",
+                                    epoch: 3, simTick: 0, mode: .deterministic,
+                                    resetScope: ["body"])
+    _ = v4Filter.receiveLineForTesting(Data(#"{"type":"session_state","protocol_version":4,"session_id":"strict-v4","epoch":3,"seq":4,"sim_tick":0,"mode":"deterministic","state":"paused","ok":true}"#.utf8))
+    check("reset promotes expected epoch before confirmation",
+          v4Filter.latestSessionState()?.epoch == 3
+          && v4Filter.latestSessionState()?.state == "paused")
+    let staleAfterReset = v4Filter.staleSessionPacketCount
+    _ = v4Filter.receiveLineForTesting(Data(#"{"type":"lab_ack","id":35,"ok":true,"action":"touch","message":"late epoch 2","session_id":"strict-v4","epoch":2,"applied_epoch":2,"applied_tick":20}"#.utf8))
+    check("old epoch ACK rejected after reset epoch promotion",
+          v4Filter.latestLabAck() == nil
+          && v4Filter.staleSessionPacketCount == staleAfterReset + 1)
+    v4Filter.disconnectForTesting()
+    let v4Gen2 = v4Filter.beginConnectionForTesting()
+    _ = v4Filter.receiveLineForTesting(Data(#"{"type":"lab_ack","id":34,"ok":true,"action":"touch","message":"after reconnect","status":"applied","session_id":"strict-v4","epoch":3,"applied_epoch":3,"applied_tick":0,"sim_tick":0}"#.utf8))
+    check("reconnect generation does not become simulation epoch",
+          v4Gen2 == v4Gen1 + 1 && v4Filter.latestLabAck()?.id == 34
+          && v4Filter.latestLabAck()?.epoch == 3)
+
+    let v4Overflow = FlyGymBridge()
+    _ = v4Overflow.beginConnectionForTesting()
+    for i in 0..<32 {
+        _ = v4Overflow.sendLab(action: "spawn_sphere", target: "v4q_\(i)",
+                               protocolVersion: FlyGymProtocolV4.version,
+                               sessionID: "queue-v4", epoch: 1, requestedTick: 0)
+    }
+    let rejectedID = v4Overflow.sendLab(action: "spawn_sphere", target: "v4q_overflow",
+                                        protocolVersion: FlyGymProtocolV4.version,
+                                        sessionID: "queue-v4", epoch: 1, requestedTick: 0)
+    check("V4 discrete queue overflow fails closed visibly",
+          v4Overflow.pendingLabDepth() == 32 && v4Overflow.labDropped == 1
+          && v4Overflow.latestLabAck()?.id == rejectedID
+          && v4Overflow.latestLabAck()?.ok == false
+          && v4Overflow.latestLabAck()?.status == "queue_full")
+
+    let v4Order = FlyGymBridge()
+    _ = v4Order.beginConnectionForTesting()
+    _ = v4Order.sendSessionControl(action: "begin", sessionID: "order-v4",
+                                   epoch: 1, simTick: 0, mode: .deterministic)
+    // Remove hello + begin control packets from the synthetic sender lane.
+    _ = v4Order.dequeueLaneForTesting(at: Date())
+    _ = v4Order.dequeueLaneForTesting(at: Date().addingTimeInterval(0.02))
+    _ = v4Order.sendLab(action: "touch", target: "thorax", strength: 0.3,
+                        durationMs: 50,
+                        protocolVersion: FlyGymProtocolV4.version,
+                        sessionID: "order-v4", epoch: 1, requestedTick: 0)
+    var orderSignals = BrainSignals(); orderSignals.walkDrive = 0.2
+    let orderStepQueued = v4Order.sendExperimentStep(sessionID: "order-v4", epoch: 1,
+                                                     seq: 1, simTick: 0,
+                                                     signals: orderSignals)
+    let firstBoundaryLane = v4Order.dequeueLaneForTesting(at: Date().addingTimeInterval(0.04))
+    let secondBoundaryLane = v4Order.dequeueLaneForTesting(at: Date().addingTimeInterval(0.06))
+    check("V4 command wire order cannot be overtaken by boundary step",
+          orderStepQueued && firstBoundaryLane == .lab && secondBoundaryLane == .experimentStep)
+
     // Fair sender arbitration: a full 32-command lab burst must drain while a
     // normal latest-state brain packet gets the wire at least every ~75 ms.
     let fair = FlyGymBridge()
@@ -1124,6 +1760,8 @@ func runBridgeTest() {
             case .lab:
                 labSends += 1
             case .escape:
+                break
+            case .control, .experimentStep:
                 break
             }
         }
@@ -1184,6 +1822,219 @@ func runBridgeLoopTest() {
         && maxGap <= 0.250 && simWall > 0.25 && peakBodySpeed > 0.0005
     print(pass ? "BRIDGELOOP PASS" : "BRIDGELOOP FAIL")
     exit(pass ? 0 : 1)
+}
+
+// MARK: - V4 live lockstep test (--v4loop, needs bridge.py running)
+
+/// Exercises the actual TCP V4 lifecycle without AppKit. This is intentionally
+/// backend-agnostic: run it once against --mock and once against real headless
+/// FlyGym to prove capability negotiation, exact 20 ms stepping, pause barriers,
+/// command applied ticks, epoch reset, and true interactive body pause.
+func runV4LoopTest() {
+    let fg = FlyGymBridge()
+    fg.start()
+    var failures = 0
+    func check(_ name: String, _ ok: Bool, _ detail: String = "") {
+        print((ok ? "PASS" : "FAIL") + "  " + name + (detail.isEmpty ? "" : ": " + detail))
+        if !ok { failures += 1 }
+    }
+    func waitUntil(_ seconds: Double, _ predicate: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            if predicate() { return true }
+            Thread.sleep(forTimeInterval: 0.005)
+        }
+        return predicate()
+    }
+    func waitSession(_ sessionID: String, epoch: Int, state: String,
+                     seconds: Double = 8.0) -> FlyGymSessionStatePacket? {
+        var found: FlyGymSessionStatePacket?
+        _ = waitUntil(seconds) {
+            guard let s = fg.latestSessionState(), s.sessionID == sessionID,
+                  s.epoch == epoch, s.state == state else { return false }
+            found = s; return true
+        }
+        return found
+    }
+    func waitStep(_ seq: Int, seconds: Double = 12.0) -> FlyGymExperimentStepResultPacket? {
+        var found: FlyGymExperimentStepResultPacket?
+        _ = waitUntil(seconds) {
+            guard let r = fg.latestExperimentStepResult(), r.seq == seq else { return false }
+            found = r; return true
+        }
+        return found
+    }
+    func waitAck(_ id: Int, seconds: Double = 8.0) -> LabAck? {
+        var found: LabAck?
+        _ = waitUntil(seconds) {
+            guard let a = fg.latestLabAck(), a.id == id else { return false }
+            found = a; return true
+        }
+        return found
+    }
+
+    let connected = waitUntil(10) { fg.connected && fg.serverHello() != nil }
+    check("V4 live bridge connects and receives hello", connected)
+    guard connected, let hello = fg.serverHello() else {
+        fg.stop(); print("V4LOOP FAIL (\(max(1, failures)))"); exit(1)
+    }
+    check("backend advertises deterministic V4 + exact 20ms quantum",
+          hello.supportsDeterministicV4,
+          String(format: "protocol=%d physics=%.6fms quanta=%@",
+                 hello.protocolVersion, (hello.physicsTimestepS ?? 0) * 1000,
+                 String(describing: hello.supportedQuantumTicks)))
+
+    let session = "v4loop-\(UUID().uuidString)"
+    let beginQueued = fg.sendSessionControl(action: "begin", sessionID: session,
+                                            epoch: 1, simTick: 0,
+                                            mode: .deterministic) != nil
+    let began = waitSession(session, epoch: 1, state: "running")
+    check("deterministic session begins at epoch1 tick0",
+          beginQueued && began?.ok == true && began?.simTick == 0)
+
+    let commandID = fg.sendLab(action: "wind", strength: 0.35, durationMs: 80,
+                               directionDeg: 45, physical: true, sensory: true,
+                               continuous: false,
+                               protocolVersion: FlyGymProtocolV4.version,
+                               sessionID: session, epoch: 1, requestedTick: 0)
+    var signals = BrainSignals(); signals.walkDrive = 0.25; signals.turnBias = 0.05
+    let step0Queued = fg.sendExperimentStep(sessionID: session, epoch: 1, seq: 1,
+                                            simTick: 0, signals: signals)
+    let result0 = waitStep(1)
+    let commandAck = waitAck(commandID)
+    check("live lockstep advances exactly 20ms",
+          step0Queued && result0?.ok == true && result0?.simTick == 0
+          && result0?.endSimTick == 20
+          && abs((result0?.body.t ?? -1) - 0.020) < 1e-8,
+          "end=\(result0?.endSimTick ?? -1) body_t=\(result0?.body.t ?? -1)")
+    check("live command applies at requested boundary before step",
+          commandAck?.ok == true && commandAck?.appliedEpoch == 1
+          && commandAck?.appliedTick == 0 && commandAck?.status == "applied",
+          "ack_tick=\(commandAck?.appliedTick ?? -1) status=\(commandAck?.status ?? "nil")")
+
+    let pauseQueued = fg.sendSessionControl(action: "pause", sessionID: session,
+                                            epoch: 1, simTick: 20,
+                                            mode: .deterministic) != nil
+    let paused = waitSession(session, epoch: 1, state: "paused")
+    let resultCountBeforeWall = fg.experimentStepRecvCount
+    let bodyTimeBeforeWall = result0?.body.t ?? -1
+    let pausedCommandID = fg.sendLab(action: "touch", target: "thorax",
+                                     strength: 0.25, durationMs: 100,
+                                     protocolVersion: FlyGymProtocolV4.version,
+                                     sessionID: session, epoch: 1, requestedTick: 20)
+    Thread.sleep(forTimeInterval: 1.05)
+    let resultAfterWall = fg.latestExperimentStepResult()
+    let pauseFrozen = pauseQueued && paused?.ok == true
+        && fg.experimentStepRecvCount == resultCountBeforeWall
+        && abs((resultAfterWall?.body.t ?? bodyTimeBeforeWall) - bodyTimeBeforeWall) < 1e-12
+        && fg.latestLabAck()?.id != pausedCommandID
+    check("live deterministic pause freezes for >1 wall second", pauseFrozen,
+          "step_results=\(resultCountBeforeWall)->\(fg.experimentStepRecvCount)")
+
+    let resumeQueued = fg.sendSessionControl(action: "resume", sessionID: session,
+                                             epoch: 1, simTick: 20,
+                                             mode: .deterministic) != nil
+    let resumed = waitSession(session, epoch: 1, state: "running")
+    let step1Queued = fg.sendExperimentStep(sessionID: session, epoch: 1, seq: 2,
+                                            simTick: 20, signals: signals)
+    let result1 = waitStep(2)
+    let pausedAck = waitAck(pausedCommandID)
+    check("resume advances one quantum without wall catch-up",
+          resumeQueued && resumed?.ok == true && step1Queued
+          && result1?.ok == true && result1?.endSimTick == 40
+          && abs((result1?.body.t ?? -1) - 0.040) < 1e-8)
+    check("paused command applies at first resumed boundary",
+          pausedAck?.ok == true && pausedAck?.appliedTick == 20
+          && pausedAck?.appliedEpoch == 1)
+
+    _ = fg.sendSessionControl(action: "pause", sessionID: session,
+                              epoch: 1, simTick: 40, mode: .deterministic)
+    let pausedForReset = waitSession(session, epoch: 1, state: "paused")
+    let resetQueued = fg.sendSessionControl(action: "reset", sessionID: session,
+                                            epoch: 2, simTick: 0,
+                                            mode: .deterministic,
+                                            resetScope: ["body", "world"]) != nil
+    let resetState = waitSession(session, epoch: 2, state: "paused")
+    check("live logical reset advances epoch exactly once",
+          pausedForReset?.ok == true && resetQueued && resetState?.ok == true
+          && resetState?.epoch == 2 && resetState?.simTick == 0)
+
+    // Start a fresh interactive session and prove its autonomous body loop also
+    // stops at a real pause barrier. Interactive mode remains wall-paced, but
+    // pause is no longer a SceneKit-only display state.
+    let interactive = "v4loop-interactive-\(UUID().uuidString)"
+    let interactiveBegin = fg.sendSessionControl(action: "begin", sessionID: interactive,
+                                                  epoch: 1, simTick: 0,
+                                                  mode: .interactive) != nil
+    let interactiveRunning = waitSession(interactive, epoch: 1, state: "running")
+    let gotInteractiveBody = waitUntil(12) { (fg.latestBody(maxAge: 2.0)?.simTime ?? 0) > 0 }
+    let bodyBeforePauseRequest = fg.latestBody(maxAge: 2.0)?.simTime ?? -1
+    let interactivePause = fg.sendSessionControl(action: "pause", sessionID: interactive,
+                                                  epoch: 1, simTick: 0,
+                                                  mode: .interactive) != nil
+    let interactivePaused = waitSession(interactive, epoch: 1, state: "paused")
+    // The backend may already be inside one autonomous physics chunk when the
+    // control packet arrives. The pause barrier is the confirmed boundary after
+    // that in-flight chunk, not the earlier wall instant when Swift queued it.
+    let bodyAtPauseBarrier = fg.latestBody(maxAge: 2.0)?.simTime ?? -1
+    Thread.sleep(forTimeInterval: 1.05)
+    let bodyDuringPause = fg.latestBody(maxAge: 5.0)?.simTime ?? -2
+    check("interactive V4 pause stops autonomous body physics",
+          interactiveBegin && interactiveRunning?.ok == true && gotInteractiveBody
+          && interactivePause && interactivePaused?.ok == true
+          && bodyAtPauseBarrier >= bodyBeforePauseRequest
+          && abs(bodyDuringPause - bodyAtPauseBarrier) < 1e-12,
+          String(format: "request_t %.6f barrier_t %.6f -> %.6f",
+                 bodyBeforePauseRequest, bodyAtPauseBarrier, bodyDuringPause))
+    _ = fg.sendSessionControl(action: "resume", sessionID: interactive,
+                              epoch: 1, simTick: 0, mode: .interactive)
+    _ = waitSession(interactive, epoch: 1, state: "running")
+    let interactiveAdvanced = waitUntil(12) {
+        (fg.latestBody(maxAge: 2.0)?.simTime ?? bodyAtPauseBarrier) > bodyAtPauseBarrier + 1e-6
+    }
+    check("interactive resume advances again without paused-wall catch-up", interactiveAdvanced)
+
+    // Same-machine repeatability: begin a fresh deterministic session, which
+    // resets body/controller state, then replay the identical first-boundary
+    // wind command and neural command used above. Protocol/controller fields are
+    // exact; real MuJoCo observables use a tight numeric tolerance rather than a
+    // cross-hardware bit-identity claim.
+    let repeatSession = "v4loop-repeat-\(UUID().uuidString)"
+    _ = fg.sendSessionControl(action: "begin", sessionID: repeatSession,
+                              epoch: 1, simTick: 0, mode: .deterministic)
+    let repeatBegan = waitSession(repeatSession, epoch: 1, state: "running")
+    let repeatCommandID = fg.sendLab(action: "wind", strength: 0.35, durationMs: 80,
+                                     directionDeg: 45, physical: true, sensory: true,
+                                     continuous: false,
+                                     protocolVersion: FlyGymProtocolV4.version,
+                                     sessionID: repeatSession, epoch: 1, requestedTick: 0)
+    let repeatQueued = fg.sendExperimentStep(sessionID: repeatSession, epoch: 1,
+                                             seq: 1, simTick: 0, signals: signals)
+    let repeatResult = waitStep(1)
+    let repeatAck = waitAck(repeatCommandID)
+    let reference = result0?.body
+    let repeated = repeatResult?.body
+    let exactRepeat = repeatBegan?.ok == true && repeatQueued
+        && repeatResult?.ok == true && repeatResult?.endSimTick == result0?.endSimTick
+        && repeatAck?.appliedTick == commandAck?.appliedTick
+        && repeated?.t == reference?.t && repeated?.simDt == reference?.simDt
+        && repeated?.controllerLeft == reference?.controllerLeft
+        && repeated?.controllerRight == reference?.controllerRight
+        && repeated?.contacts == reference?.contacts
+    let physicalTolerance = 1e-9
+    let numericRepeat = abs((repeated?.vx ?? .infinity) - (reference?.vx ?? 0)) <= physicalTolerance
+        && abs((repeated?.yawRate ?? .infinity) - (reference?.yawRate ?? 0)) <= physicalTolerance
+        && abs((repeated?.headingRad ?? .infinity) - (reference?.headingRad ?? 0)) <= physicalTolerance
+    check("same-machine repeated deterministic real/mock quantum is reproducible",
+          exactRepeat && numericRepeat,
+          String(format: "Δvx=%.3g Δyaw=%.3g Δheading=%.3g",
+                 abs((repeated?.vx ?? .infinity) - (reference?.vx ?? 0)),
+                 abs((repeated?.yawRate ?? .infinity) - (reference?.yawRate ?? 0)),
+                 abs((repeated?.headingRad ?? .infinity) - (reference?.headingRad ?? 0))))
+
+    fg.stop()
+    print(failures == 0 ? "V4LOOP PASS" : "V4LOOP FAIL (\(failures))")
+    exit(failures == 0 ? 0 : 1)
 }
 
 // MARK: - Live lab protocol test (--labloop, needs bridge.py running)

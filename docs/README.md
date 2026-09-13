@@ -9,14 +9,26 @@
 
 ## Plans
 
-- `plans/VIRTUAL_FLY_LAB_ROADMAP.md` — long-term V3–V16+ release sequence and scope boundaries.
-- `plans/VIRTUAL_FLY_LAB_V4_PLAN.md` — active V4 implementation contract.
-- `plans/VIRTUAL_FLY_LAB_V3_PLAN.md` — completed V3 implementation contract.
-- `plans/VIRTUAL_FLY_LAB_V2_FIX_PLAN.md` — historical V2 repair plan.
-- `plans/PLAN_FLYGYM.md` — original FlyGym integration design notes.
+- [V4–V14 sequential roadmap](plans/VIRTUAL_FLY_LAB_ROADMAP.md) — authoritative order; V4 is complete, V5 is next, and V6–V14 are planned.
+- [Implementation playbook](plans/IMPLEMENTATION_PLAYBOOK.md) — contracts, step tracking, validation, failure handling and handoff rules.
+- [Interactive sandbox design](plans/INTERACTIVE_FLY_SANDBOX_PLAN.md) — participant Viewer, environment controls, external I/O and neural interpretation contracts.
+- [V4 implementation plan](plans/VIRTUAL_FLY_LAB_V4_PLAN.md)
+- [V5 implementation plan](plans/VIRTUAL_FLY_LAB_V5_PLAN.md)
+- [V6 implementation plan](plans/VIRTUAL_FLY_LAB_V6_PLAN.md)
+- [V7 implementation plan](plans/VIRTUAL_FLY_LAB_V7_PLAN.md)
+- [V8 implementation plan](plans/VIRTUAL_FLY_LAB_V8_PLAN.md)
+- [V9 implementation plan](plans/VIRTUAL_FLY_LAB_V9_PLAN.md)
+- [V10 implementation plan](plans/VIRTUAL_FLY_LAB_V10_PLAN.md)
+- [V11 implementation plan](plans/VIRTUAL_FLY_LAB_V11_PLAN.md)
+- [V12 implementation plan](plans/VIRTUAL_FLY_LAB_V12_PLAN.md)
+- [V13 implementation plan](plans/VIRTUAL_FLY_LAB_V13_PLAN.md)
+- [V14 implementation plan](plans/VIRTUAL_FLY_LAB_V14_PLAN.md)
+
+V3/V2 and original FlyGym plans are historical. The former roadmap is preserved in `history/VIRTUAL_FLY_LAB_ROADMAP_PRE_INTERACTIVE_2026-09-13.md`; its old version assignments are superseded.
 
 ## Reports
 
+- `reports/V4_COMPLETION_REPORT.md` — V4 fixed-tick/session implementation, full regression and real Viewer acceptance evidence.
 - `reports/V3_COMPLETION_REPORT.md` — V3 implementation and regression evidence.
 - `reports/V3_VERIFICATION_REPORT_2026-09-13.md` — independent V3 verification and remediation history.
 - `reports/V2_FINAL_AUDIT_2026-09-13.md` — pre-V3 audit retained as historical evidence.

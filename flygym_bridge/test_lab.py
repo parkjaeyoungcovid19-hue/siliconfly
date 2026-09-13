@@ -140,15 +140,18 @@ check("BodyPacket odor fields are backward-compatible defaults",
       repr(body_default))
 body_odor = BodyPacket.from_dict({
     "type": "body", "odor_left": 2.0, "odor_right": -1.0,
-    "nearest_food_distance_mm": 12.5, "heading_rad": 9.0,
+    "nearest_food_distance_mm": 12.5, "position_x_mm": 123.4,
+    "position_y_mm": -56.7, "heading_rad": 9.0,
 })
 body_odor_wire = body_odor.to_dict()
 check("BodyPacket odor telemetry clamps and round-trips",
       body_odor.odor_left == 1.0 and body_odor.odor_right == 0.0 and
       body_odor.nearest_food_distance_mm == 12.5 and
+      body_odor.position_x_mm == 123.4 and body_odor.position_y_mm == -56.7 and
       abs(body_odor.heading_rad - math.pi) < 1e-12 and
       body_odor_wire["odor_left"] == 1.0 and body_odor_wire["odor_right"] == 0.0 and
       body_odor_wire["nearest_food_distance_mm"] == 12.5 and
+      body_odor_wire["position_x_mm"] == 123.4 and body_odor_wire["position_y_mm"] == -56.7 and
       abs(body_odor_wire["heading_rad"] - math.pi) < 1e-12, repr(body_odor_wire))
 
 

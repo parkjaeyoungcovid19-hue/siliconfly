@@ -9,7 +9,7 @@
   <img alt="macOS" src="https://img.shields.io/badge/platform-macOS-111111?style=flat-square">
   <img alt="Swift" src="https://img.shields.io/badge/frontend-Swift%20%2B%20Metal-F05138?style=flat-square">
   <img alt="FlyGym" src="https://img.shields.io/badge/body-FlyGym%202.1%20%2B%20MuJoCo-5C7CFA?style=flat-square">
-  <img alt="status" src="https://img.shields.io/badge/V3-verification%20fixes%20complete-2E8B57?style=flat-square">
+  <img alt="status" src="https://img.shields.io/badge/V4-deterministic%20session%20complete-2E8B57?style=flat-square">
 </p>
 
 <p align="center">
@@ -189,6 +189,12 @@ Telemetry includes neural rates, modeled sensory drive, receptor EMA spike rates
 
 ## Validation status
 
+### V4 deterministic session status — 2026-09-13
+
+V4 is **complete in the current local working tree**. The final acceptance pass exercised the full Swift/Python regression suite, mock and real-headless V4 TCP lockstep, real MuJoCo and rendered-eye tests, and a fresh real Viewer + GUI process. Deterministic mode uses 1 ms neural ticks and exact 20 ms brain/body quanta; the installed real FlyGym backend declared a 0.1 ms physics timestep, giving exactly 200 native MuJoCo substeps per quantum.
+
+The fresh GUI smoke also caught and fixed a lifecycle bug that unit tests had missed: an already-consumed successful `session_state` snapshot could be processed again after the local tick advanced. `LabSession` now treats old/duplicate lifecycle control sequences idempotently. After the fix, the real GUI remained in deterministic `running`, held a real pause barrier at the same tick for more than two wall seconds, queued a world mutation while paused, and applied it on Resume at the recorded boundary tick. See `docs/reports/V4_COMPLETION_REPORT.md` for exact commands, logs, screenshots, performance observations and limitations.
+
 The current V3 tree has been exercised through the full Swift and Python regression set, including the real MuJoCo body and rendered-eye path:
 
 ```sh
@@ -278,7 +284,7 @@ The project is therefore best used for **controlled comparisons inside the same 
 └── flygym_bridge/README.md         bridge internals and protocol notes
 ```
 
-For detailed controls and exact preset values, see **[Virtual Fly Lab guide](docs/guides/VIRTUAL_FLY_LAB_GUIDE.md)**. The active version roadmap and V4 implementation contract are under **[docs/plans](docs/plans/)**. Bridge internals and protocol details are in **[flygym_bridge/README.md](flygym_bridge/README.md)**.
+For detailed controls and exact preset values, see **[Virtual Fly Lab guide](docs/guides/VIRTUAL_FLY_LAB_GUIDE.md)**. The **[V4–V14 sequential roadmap](docs/plans/VIRTUAL_FLY_LAB_ROADMAP.md)** and detailed per-version plans define the participant Viewer, environment editing, neural interpretation and external I/O extension path. V4 is complete; V5 is the next implementation version and V6–V14 remain planned. Bridge internals and protocol details are in **[flygym_bridge/README.md](flygym_bridge/README.md)**.
 
 ---
 

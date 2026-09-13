@@ -74,7 +74,7 @@ final class ExperimentRecorder {
     }
 
     @discardableResult
-    func start() -> String? {
+    func start(metadata extraMetadata: [String: Any] = [:]) -> String? {
         lock.lock()
         if _state == .recording { let p = _path; lock.unlock(); return p }
         if _state == .stopping { lock.unlock(); return nil }
@@ -103,12 +103,13 @@ final class ExperimentRecorder {
                   fm.createFile(atPath: eventsURL.path, contents: Data()) else {
                 throw CocoaError(.fileWriteUnknown)
             }
-            let meta: [String: Any] = [
-                "format": "Thongpari Fly Neuron Sim Virtual Fly Lab V2",
+            var meta: [String: Any] = [
+                "format": "Thongpari Fly Neuron Sim Virtual Fly Lab V4",
                 "created_at": ISO8601DateFormatter().string(from: Date()),
                 "telemetry": "telemetry.csv",
                 "events": "events.jsonl"
             ]
+            for (key, value) in extraMetadata { meta[key] = value }
             let metaData = try JSONSerialization.data(withJSONObject: meta, options: [.prettyPrinted, .sortedKeys])
             try metaData.write(to: metadataURL, options: .atomic)
             let tfh = try FileHandle(forWritingTo: telemetryURL)
@@ -118,7 +119,7 @@ final class ExperimentRecorder {
             telemetryHandle = tfh; eventsHandle = efh; _path = dir.path
             _lastErrorMessage = nil; _state = .recording
             lock.unlock()
-            mark(kind: "recording_started", detail: "Virtual Fly Lab V2")
+            mark(kind: "recording_started", detail: "Virtual Fly Lab V4")
             return dir.path
         } catch {
             lock.lock()
@@ -147,13 +148,23 @@ final class ExperimentRecorder {
         lock.unlock()
     }
 
-    func mark(kind: String, detail: String, commandID: Int? = nil) {
+    func mark(kind: String, detail: String, commandID: Int? = nil,
+              sessionID: String? = nil, epoch: Int? = nil, simTick: Int? = nil,
+              requestedTick: Int? = nil, appliedTick: Int? = nil,
+              appliedEpoch: Int? = nil, status: String? = nil) {
         var obj: [String: Any] = [
             "wall_time": Date().timeIntervalSince1970,
             "kind": kind,
             "detail": detail
         ]
         if let commandID { obj["command_id"] = commandID }
+        if let sessionID { obj["session_id"] = sessionID }
+        if let epoch { obj["epoch"] = epoch }
+        if let simTick { obj["sim_tick"] = simTick }
+        if let requestedTick { obj["requested_tick"] = requestedTick }
+        if let appliedTick { obj["applied_tick"] = appliedTick }
+        if let appliedEpoch { obj["applied_epoch"] = appliedEpoch }
+        if let status { obj["status"] = status }
         guard var data = try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys]) else { return }
         data.append(0x0A)
         lock.lock()

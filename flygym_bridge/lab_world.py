@@ -41,11 +41,16 @@ FOOD_ODOR_DECAY_MM = 30.0
 # odor field is a bounded sensory model only; taste/reward/feeding and direct
 # neural wiring remain intentionally absent.
 DEFAULT_SLOT_COUNTS = {
-    "box": 8,
-    "sphere": 8,
-    "wall": 8,
-    "food": 4,
+    # Runtime MuJoCo topology is fixed after compilation, so keep a generous
+    # preallocated pool. These mocap geoms are hidden/inactive until used and
+    # are cheap compared with the fly model itself.
+    "box": 64,
+    "sphere": 64,
+    "wall": 64,
+    "food": 32,
 }
+
+MAX_SLOT_COUNT_PER_SHAPE = 256
 
 DEFAULT_COLORS = {
     # Match VisionLoomDetector's configured magenta target for ordinary lab
@@ -144,7 +149,7 @@ class LabWorld:
         if slot_counts:
             for shape, count in slot_counts.items():
                 if shape in counts:
-                    counts[shape] = max(0, min(32, int(count)))
+                    counts[shape] = max(0, min(MAX_SLOT_COUNT_PER_SHAPE, int(count)))
         self.slot_counts = counts
         self.objects = {}
         self._free_slots = {
@@ -821,6 +826,8 @@ class LabWorld:
         return {
             "physical_backend": bool(self._bound),
             "objects": [self.objects[k].state() for k in sorted(self.objects)],
+            "slot_capacity": {shape: int(count) for shape, count in self.slot_counts.items()},
+            "slot_free": {shape: len(slots) for shape, slots in self._free_slots.items()},
             "approaches": [
                 {
                     "id": m.object_id,
