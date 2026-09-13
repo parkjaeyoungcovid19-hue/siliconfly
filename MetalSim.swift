@@ -94,6 +94,9 @@ struct SimParams {
 private enum Group {
     static let loom: UInt8 = 1, gf: UInt8 = 2, dnaL: UInt8 = 3, dnaR: UInt8 = 4
     static let mdn: UInt8 = 5, fwd: UInt8 = 6, groom: UInt8 = 7, escw: UInt8 = 8
+    static let foodL: UInt8 = 9, foodR: UInt8 = 10
+    static let thermoWarm: UInt8 = 11, thermoCool: UInt8 = 12
+    static let windC: UInt8 = 13, windE: UInt8 = 14
     static let slots = 16   // padded, one histogram per batch slot
 }
 
@@ -269,6 +272,19 @@ final class MetalShared {
 // MARK: - MetalSim
 
 final class MetalSim {
+    /// Extra experimental sensory channels selected from the shipped FlyWire
+    /// cell-type labels at runtime.  They are deliberately *not* new Role ids:
+    /// keeping them outside the fixed ETL role table means they retain their
+    /// ordinary connectome edges and, importantly, do not inherit Role.sens's
+    /// special giant-fiber weight shortcut.
+    enum ModeledSensoryChannel: String, Hashable {
+        case foodOdorLeft, foodOdorRight
+        case thermoWarm, thermoCool
+        case windC, windE
+        case touchGeneric
+        case hygroDry, hygroMoist
+    }
+
     // ---- topology (shared with the connectome, no copies) --------------------
     let n: Int
     let roles: [String]
@@ -290,6 +306,14 @@ final class MetalSim {
     private(set) var escw: [Int] = []      // DNp02/04/11 escape-maneuver (wing) DNs
     private(set) var ascend: [Int] = []    // ascending partners (leg proprioception)
     private(set) var sens: [Int] = []      // sensory partners (air-puff pathway)
+    private(set) var foodOdorLeft: [Int] = []   // ORN_DM1 + ORN_VA2, left antenna
+    private(set) var foodOdorRight: [Int] = []  // ORN_DM1 + ORN_VA2, right antenna
+    private(set) var thermoWarm: [Int] = []     // TRN_VP2
+    private(set) var thermoCool: [Int] = []     // TRN_VP3a + TRN_VP3b
+    private(set) var windC: [Int] = []          // outgoing JO-C* Johnston's-organ cells
+    private(set) var windE: [Int] = []          // outgoing JO-E* Johnston's-organ cells
+    private(set) var hygroDry: [Int] = []       // HRN_VP4
+    private(set) var hygroMoist: [Int] = []     // HRN_VP5
 
     // ---- inputs (0..1), set each frame by the coordinator ---------------------
     var loomL: Float = 0
@@ -308,6 +332,12 @@ final class MetalSim {
     private(set) var rateFwd: Float = 0
     private(set) var rateGroom: Float = 0
     private(set) var rateEscW: Float = 0
+    private(set) var rateFoodOdorL: Float = 0
+    private(set) var rateFoodOdorR: Float = 0
+    private(set) var rateThermoWarm: Float = 0
+    private(set) var rateThermoCool: Float = 0
+    private(set) var rateWindC: Float = 0
+    private(set) var rateWindE: Float = 0
     private(set) var ratePop: Float = 0    // whole-population Hz per neuron
     private var gfLatch = false
     private(set) var simMs: Int = 0
@@ -356,12 +386,15 @@ final class MetalSim {
     private var logSteps = 0, logSpikes = 0, logWallMicros = 0.0, logNextMs = 30_000
 
     // EMA denominators
-    private let nLoom, nDNaL, nDNaR, nMDN, nFwd, nGroom, nEscW, nPop: Float
+    private let nLoom, nDNaL, nDNaR, nMDN, nFwd, nGroom, nEscW: Float
+    private let nFoodOdorL, nFoodOdorR, nThermoWarm, nThermoCool, nWindC, nWindE, nPop: Float
 
     // "optogenetic" stimulation from brain-window clicks (any thread)
     private struct Stim { let idx: [Int]; let strength: Float; let durationMs: Int; var untilMs = 0 }
+    private struct ModeledDrive { let idx: [Int]; let strength: Float }
     private var pendingStims: [Stim] = []
     private var activeStims: [Stim] = []
+    private var modeledDrives: [ModeledSensoryChannel: ModeledDrive] = [:]
     private var extDirty = Set<Int>()
     private let stimLock = NSLock()
 
@@ -400,6 +433,24 @@ final class MetalSim {
         classOf = c.superClass
         for i in 0..<n {
             let left = c.side[i] == 1
+            let type = c.typeName[i]
+            // Runtime cell-type groups for Virtual Fly Lab V2.  These are exact
+            // FlyWire v783 labels from the shipped manifest.  The transduction
+            // from a lab scalar (odor, temperature, wind) into current is still
+            // an explicit modeling assumption; downstream propagation is the
+            // unchanged full connectome.
+            if type == "ORN_DM1" || type == "ORN_VA2" {
+                if c.side[i] == 1 { foodOdorLeft.append(i) }
+                else if c.side[i] == 2 { foodOdorRight.append(i) }
+            }
+            if type == "TRN_VP2" { thermoWarm.append(i) }
+            if type == "TRN_VP3a" || type == "TRN_VP3b" { thermoCool.append(i) }
+            // Only cells with actual outgoing graph rows are useful as sensory
+            // input nodes.  This filters a few JO-C/E annotations with no edges.
+            if type.hasPrefix("JO-C") && c.rowStart[i + 1] > c.rowStart[i] { windC.append(i) }
+            if type.hasPrefix("JO-E") && c.rowStart[i + 1] > c.rowStart[i] { windE.append(i) }
+            if type == "HRN_VP4" { hygroDry.append(i) }
+            if type == "HRN_VP5" { hygroMoist.append(i) }
             switch c.role[i] {
             case Role.lc4, Role.lplc2:
                 groupOf[i] = Group.loom
@@ -417,6 +468,22 @@ final class MetalSim {
             case Role.ascend: inputKind[i] = 3; ascend.append(i)
             case Role.sens:   inputKind[i] = 4; sens.append(i)
             default: break
+            }
+            // Receptor telemetry groups are diagnostic histograms only. They do
+            // not change roles, wiring, input routing or any downstream dynamics.
+            if groupOf[i] == 0 {
+                if type == "ORN_DM1" || type == "ORN_VA2" {
+                    if c.side[i] == 1 { groupOf[i] = Group.foodL }
+                    else if c.side[i] == 2 { groupOf[i] = Group.foodR }
+                } else if type == "TRN_VP2" {
+                    groupOf[i] = Group.thermoWarm
+                } else if type == "TRN_VP3a" || type == "TRN_VP3b" {
+                    groupOf[i] = Group.thermoCool
+                } else if type.hasPrefix("JO-C") && c.rowStart[i + 1] > c.rowStart[i] {
+                    groupOf[i] = Group.windC
+                } else if type.hasPrefix("JO-E") && c.rowStart[i + 1] > c.rowStart[i] {
+                    groupOf[i] = Group.windE
+                }
             }
         }
 
@@ -457,6 +524,9 @@ final class MetalSim {
         nDNaL = Float(max(1, dnaL.count)); nDNaR = Float(max(1, dnaR.count))
         nMDN = Float(max(1, mdn.count)); nFwd = Float(max(1, fwd.count))
         nGroom = Float(max(1, groom.count)); nEscW = Float(max(1, escw.count))
+        nFoodOdorL = Float(max(1, foodOdorLeft.count)); nFoodOdorR = Float(max(1, foodOdorRight.count))
+        nThermoWarm = Float(max(1, thermoWarm.count)); nThermoCool = Float(max(1, thermoCool.count))
+        nWindC = Float(max(1, windC.count)); nWindE = Float(max(1, windE.count))
         nPop = Float(max(1, n))
         logNextMs = perfLogIntervalMs
         applySeed(seed)
@@ -505,12 +575,40 @@ final class MetalSim {
 
     func consumeGF() -> Bool { let s = gfLatch; gfLatch = false; return s }
 
+    /// Set one continuous sensory-model drive on a real FlyWire cell-type group.
+    /// Call only on the simulation-owner thread (Coordinator enqueues UI work).
+    /// Values are threshold units added every simulated millisecond and are kept
+    /// deliberately small; zero removes the channel.  Direct-neural `stimulate`
+    /// remains a separate, stronger intervention path.
+    func setModeledSensoryDrive(_ channel: ModeledSensoryChannel,
+                                indices: [Int], strength: Float) {
+        let s = min(0.20, max(0, strength))
+        if s <= 0 || indices.isEmpty {
+            modeledDrives.removeValue(forKey: channel)
+        } else {
+            modeledDrives[channel] = ModeledDrive(idx: indices, strength: s)
+        }
+        rebuildExtInput()
+    }
+
+    func clearModeledSensoryDrives() {
+        guard !modeledDrives.isEmpty else { return }
+        modeledDrives.removeAll(keepingCapacity: true)
+        rebuildExtInput()
+    }
+
     /// Recomputes `extInput` from the active stim set. Only the touched indices
     /// are rewritten, and they are rebuilt (not incremented/decremented) so the
     /// value is exact no matter how stims overlap.
     private func rebuildExtInput() {
         for i in extDirty { extPtr[i] = 0 }
         extDirty.removeAll(keepingCapacity: true)
+        for d in modeledDrives.values {
+            for i in d.idx where i >= 0 && i < n {
+                extPtr[i] += d.strength
+                extDirty.insert(i)
+            }
+        }
         for s in activeStims {
             for i in s.idx where i >= 0 && i < n {
                 extPtr[i] += s.strength
@@ -586,7 +684,7 @@ final class MetalSim {
                 pNoise: noise, noiseKick: p.noiseKick, activityScale: activityScale,
                 loomDriveL: loomL > 0.001 ? loomL * p.loomGain * sensoryGate : 0,
                 loomDriveR: loomR > 0.001 ? loomR * p.loomGain * sensoryGate : 0,
-                ascendDrive: gaitDrive > 0.001 ? gaitDrive * p.ascendGain : 0,
+                ascendDrive: gaitDrive > 0.001 ? gaitDrive * p.ascendGain * sensoryGate : 0,
                 gaitPh: gaitPhase * 2 * Float.pi,
                 airPuffDrive: airPuff > 0.001 ? airPuff * p.airPuffGain * sensoryGate : 0,
                 floorV: p.floorV))
@@ -635,6 +733,12 @@ final class MetalSim {
             rateFwd  += (Float(g[Int(Group.fwd)])  * 1000 / nFwd  - rateFwd)  * a
             rateGroom += (Float(g[Int(Group.groom)]) * 1000 / nGroom - rateGroom) * a
             rateEscW += (Float(g[Int(Group.escw)]) * 1000 / nEscW - rateEscW) * a
+            rateFoodOdorL += (Float(g[Int(Group.foodL)]) * 1000 / nFoodOdorL - rateFoodOdorL) * a
+            rateFoodOdorR += (Float(g[Int(Group.foodR)]) * 1000 / nFoodOdorR - rateFoodOdorR) * a
+            rateThermoWarm += (Float(g[Int(Group.thermoWarm)]) * 1000 / nThermoWarm - rateThermoWarm) * a
+            rateThermoCool += (Float(g[Int(Group.thermoCool)]) * 1000 / nThermoCool - rateThermoCool) * a
+            rateWindC += (Float(g[Int(Group.windC)]) * 1000 / nWindC - rateWindC) * a
+            rateWindE += (Float(g[Int(Group.windE)]) * 1000 / nWindE - rateWindE) * a
             ratePop  += (Float(total) * 1000 / nPop - ratePop) * a
 
             if spikeBus != nil {
@@ -683,13 +787,60 @@ final class MetalSim {
     }
 
     /// The most recent step's spike histogram, indexed by the kernel's group ids
-    /// (1 loom, 2 gf, 3 dnaL, 4 dnaR, 5 mdn, 6 fwd, 7 groom, 8 escw).
+    /// (1-8 core outputs; 9-14 lab receptor telemetry groups).
     func lastStepGroupCounts() -> [UInt32] { lastGroupCounts }
+
+    /// Test-only visibility into the shared external-current buffer. This reads
+    /// only between step() calls and does not mutate simulation state.
+    func debugExternalInput(_ indices: [Int]) -> [Float] {
+        indices.compactMap { i in (i >= 0 && i < n) ? extPtr[i] : nil }
+    }
 
     /// Reseeds every random stream: per-neuron baselines, gait phase offsets, the
     /// membrane-noise draw and the arousal-burst schedule. Membrane state is left
     /// alone; call it right after init for a deterministic run.
     func setSeed(_ s: UInt32) { applySeed(s) }
+
+    /// Full experiment reset: clear dynamic neuron/synapse state, stimulation,
+    /// population-rate history and sensory inputs, then reseed the baseline/noise
+    /// streams. This is intentionally separate from `setSeed`, which preserves
+    /// membrane state for diagnostics. Call only between `step()` calls on the
+    /// simulation-owner thread.
+    func reset(seed s: UInt32? = nil) {
+        memset(vBuf.contents(), 0, vBuf.length)
+        memset(refrBuf.contents(), 0, refrBuf.length)
+        memset(extInputBuf.contents(), 0, extInputBuf.length)
+        memset(excBuf.contents(), 0, excBuf.length)
+        memset(inhBuf.contents(), 0, inhBuf.length)
+        memset(spikeCountBuf.contents(), 0, spikeCountBuf.length)
+        memset(groupCountBuf.contents(), 0, groupCountBuf.length)
+        memset(sampleBuf.contents(), 0xFF, sampleBuf.length)
+        memset(spikeListBuf.contents(), 0, spikeListBuf.length)
+
+        stimLock.lock()
+        pendingStims.removeAll(keepingCapacity: true)
+        activeStims.removeAll(keepingCapacity: true)
+        modeledDrives.removeAll(keepingCapacity: true)
+        extDirty.removeAll(keepingCapacity: true)
+        stimLock.unlock()
+
+        loomL = 0; loomR = 0; gaitDrive = 0; gaitPhase = 0; airPuff = 0
+        activityScale = 1; sensoryGate = 1
+        rateLoom = 0; rateDNaL = 0; rateDNaR = 0; rateMDN = 0
+        rateFwd = 0; rateGroom = 0; rateEscW = 0
+        rateFoodOdorL = 0; rateFoodOdorR = 0
+        rateThermoWarm = 0; rateThermoCool = 0
+        rateWindC = 0; rateWindE = 0; ratePop = 0
+        gfLatch = false
+        simMs = 0; totalSpikes = 0
+        lastSpikeCount = 0
+        lastGroupCounts = [UInt32](repeating: 0, count: Group.slots)
+        logSteps = 0; logSpikes = 0; logWallMicros = 0
+        avgStepMicros = 0
+        let newSeed = s ?? seed
+        applySeed(newSeed)
+        logNextMs = perfLogIntervalMs
+    }
 
     /// Overwrites the per-neuron resting drive (tuning / cross-check hook).
     func setBaseline(_ values: [Float]) {

@@ -40,6 +40,7 @@ When the main conversation runs on Fable 5, keep Fable lean and push heavy work 
 | `LIF.metal` | the two compute kernels; its header states the per-step order and the fma caveat |
 | `BrainView.swift` | brain window: 139k-soma point cloud, 378-neuron role overlay, click-to-stimulate, spike flashes |
 | `Environment.swift` | permission-free senses: `WindowSense` (ledges/looms), circadian curve, user idle, thermal tempo |
+| `FlyGymBridge.swift` | optional localhost NDJSON client for FlyGym: DN commands out, proprioception + stereo-vision looming back into existing gait/LC4-LPLC2 inputs |
 | `Diagnostics.swift` | `--brainstats [s]`: rest-regime rates by class/role/cell type, hotspot probe, in-weight audit, `weightScale = 0` control |
 | `GPUCheck.swift` | `--gpucheck`: an independent CPU reference (`RefSim`) compared to the GPU step by step |
 | `etl.py` | Codex dumps + connectivity parquet → `data/connectome.json` + `neurons.bin` + `synapses.bin` |

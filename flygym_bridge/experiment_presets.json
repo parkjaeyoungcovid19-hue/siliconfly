@@ -1,0 +1,192 @@
+{
+  "format": "siliconfly.virtual-fly-lab.presets",
+  "version": 1,
+  "description": "Reference specification synchronized with the built-in preset buttons in siliconfly/LabWindow.swift. The Swift UI currently executes these presets directly; this JSON is documentation/automation data and is not loaded by the UI.",
+  "units": {
+    "distance": "mm",
+    "speed": "mm/s",
+    "duration": "ms",
+    "strength": "normalized unless the action says otherwise"
+  },
+  "integration": {
+    "bridge_actions": "Send through FlyGymBridge.sendLab / LabCommand.",
+    "swift_actions": "Dispatch on Coordinator's existing lab methods.",
+    "built_in_ui": "LabWindow.runPreset contains the executable preset implementation. reset_world already restores both eyes; the covered-eye UI therefore sends only the left-eye cover after reset. This reference keeps an explicit right-eye-open assertion before the left cover for automation/validation, which is safe because the final same-key eye update is the left cover and reset_world has already opened both eyes.",
+    "recording": "The UI records a preset marker plus the individual commands/direct-neural marker while recording is active.",
+    "timing_note": "baseline_ms and observe_ms are recommended recording windows only. Built-in preset buttons execute their steps immediately and do not automatically wait for these windows."
+  },
+  "presets": [
+    {
+      "id": "loom-frontal",
+      "ui_name": "frontal_loom",
+      "name": "Frontal loom",
+      "classification": ["PHYSICAL", "SENSORY-MODEL"],
+      "purpose": "Reset the relevant lab state, place a box directly ahead in the reset world, and approach to an 8 mm stop distance.",
+      "baseline_ms": 1500,
+      "observe_ms": 2500,
+      "steps": [
+        {"phase": "setup", "executor": "swift", "action": "reset_brain"},
+        {"phase": "setup", "executor": "swift", "action": "reset_modeled_stimuli"},
+        {"phase": "setup", "executor": "bridge", "action": "reset_world"},
+        {"phase": "setup", "executor": "bridge", "action": "reset_body"},
+        {"phase": "setup", "executor": "bridge", "action": "spawn_box", "target": "preset_loom", "x": 60.0, "y": 0.0, "z": 5.0, "size_mm": 10.0},
+        {"phase": "stimulus", "executor": "bridge", "action": "approach_object", "target": "preset_loom", "speed_mm_s": 80.0, "end_distance_mm": 8.0}
+      ],
+      "primary_readouts": ["loom_l", "loom_r", "loom_hz", "escw_hz", "body_loom_l", "body_loom_r", "optic_expansion_l", "optic_expansion_r", "fly_state", "body_vx"]
+    },
+    {
+      "id": "loom-left",
+      "ui_name": "left_loom",
+      "name": "Left loom",
+      "classification": ["PHYSICAL", "SENSORY-MODEL"],
+      "purpose": "Run the built-in left-offset loom condition from world y=+22 mm after resetting brain, modeled stimuli, world, and body.",
+      "baseline_ms": 1500,
+      "observe_ms": 2500,
+      "steps": [
+        {"phase": "setup", "executor": "swift", "action": "reset_brain"},
+        {"phase": "setup", "executor": "swift", "action": "reset_modeled_stimuli"},
+        {"phase": "setup", "executor": "bridge", "action": "reset_world"},
+        {"phase": "setup", "executor": "bridge", "action": "reset_body"},
+        {"phase": "setup", "executor": "bridge", "action": "spawn_box", "target": "preset_loom", "x": 60.0, "y": 22.0, "z": 5.0, "size_mm": 10.0},
+        {"phase": "stimulus", "executor": "bridge", "action": "approach_object", "target": "preset_loom", "speed_mm_s": 80.0, "end_distance_mm": 8.0}
+      ],
+      "primary_readouts": ["loom_l", "loom_r", "dna_l_hz", "dna_r_hz", "body_yaw_rate", "occupancy_l", "occupancy_r", "optic_expansion_l", "optic_expansion_r", "fly_state"]
+    },
+    {
+      "id": "loom-right",
+      "ui_name": "right_loom",
+      "name": "Right loom",
+      "classification": ["PHYSICAL", "SENSORY-MODEL"],
+      "purpose": "Run the built-in right-offset loom condition from world y=-22 mm after resetting brain, modeled stimuli, world, and body.",
+      "baseline_ms": 1500,
+      "observe_ms": 2500,
+      "steps": [
+        {"phase": "setup", "executor": "swift", "action": "reset_brain"},
+        {"phase": "setup", "executor": "swift", "action": "reset_modeled_stimuli"},
+        {"phase": "setup", "executor": "bridge", "action": "reset_world"},
+        {"phase": "setup", "executor": "bridge", "action": "reset_body"},
+        {"phase": "setup", "executor": "bridge", "action": "spawn_box", "target": "preset_loom", "x": 60.0, "y": -22.0, "z": 5.0, "size_mm": 10.0},
+        {"phase": "stimulus", "executor": "bridge", "action": "approach_object", "target": "preset_loom", "speed_mm_s": 80.0, "end_distance_mm": 8.0}
+      ],
+      "primary_readouts": ["loom_l", "loom_r", "dna_l_hz", "dna_r_hz", "body_yaw_rate", "occupancy_l", "occupancy_r", "optic_expansion_l", "optic_expansion_r", "fly_state"]
+    },
+    {
+      "id": "loom-left-eye-covered",
+      "ui_name": "left_eye_covered_loom",
+      "name": "Left eye covered loom",
+      "classification": ["PHYSICAL", "SENSORY-MODEL"],
+      "purpose": "Reset state, cover the modeled left eye, leave the right eye open, then run the same frontal loom geometry.",
+      "baseline_ms": 1500,
+      "observe_ms": 2500,
+      "steps": [
+        {"phase": "setup", "executor": "swift", "action": "reset_brain"},
+        {"phase": "setup", "executor": "swift", "action": "reset_modeled_stimuli"},
+        {"phase": "setup", "executor": "bridge", "action": "reset_world"},
+        {"phase": "setup", "executor": "bridge", "action": "reset_body"},
+        {"phase": "setup", "executor": "bridge", "action": "set_eye_state", "target": "right", "value": 0.0},
+        {"phase": "setup", "executor": "bridge", "action": "set_eye_state", "target": "left", "value": 1.0},
+        {"phase": "setup", "executor": "bridge", "action": "spawn_box", "target": "preset_loom", "x": 60.0, "y": 0.0, "z": 5.0, "size_mm": 10.0},
+        {"phase": "stimulus", "executor": "bridge", "action": "approach_object", "target": "preset_loom", "speed_mm_s": 80.0, "end_distance_mm": 8.0}
+      ],
+      "primary_readouts": ["loom_l", "loom_r", "body_loom_l", "body_loom_r", "brightness_l", "brightness_r", "occupancy_l", "occupancy_r", "optic_expansion_l", "optic_expansion_r", "fly_state"]
+    },
+    {
+      "id": "wind-puff",
+      "ui_name": "wind_puff",
+      "name": "Wind puff",
+      "classification": ["PHYSICAL", "SENSORY-MODEL"],
+      "purpose": "Apply the built-in 0.7-strength, 500 ms wind puff at 0 degrees with both physical force and modeled sensory input enabled.",
+      "baseline_ms": 1500,
+      "observe_ms": 2000,
+      "steps": [
+        {"phase": "stimulus", "executor": "swift", "action": "apply_modeled_wind", "strength": 0.7, "duration_ms": 500, "continuous": false},
+        {"phase": "stimulus", "executor": "bridge", "action": "wind", "strength": 0.7, "duration_ms": 500, "direction_deg": 0.0, "physical": true, "sensory": true, "continuous": false}
+      ],
+      "primary_readouts": ["air_puff", "pop_hz", "escw_hz", "body_vx", "body_yaw_rate", "fly_state"]
+    },
+    {
+      "id": "thorax-touch",
+      "ui_name": "thorax_touch",
+      "name": "Thorax touch",
+      "classification": ["PHYSICAL", "SENSORY-MODEL"],
+      "purpose": "Apply the built-in 0.55-strength, 150 ms thorax touch through the physical body target and modeled sensory input.",
+      "baseline_ms": 1500,
+      "observe_ms": 2000,
+      "steps": [
+        {"phase": "stimulus", "executor": "swift", "action": "apply_modeled_touch", "strength": 0.55, "duration_ms": 150},
+        {"phase": "stimulus", "executor": "bridge", "action": "touch", "target": "thorax", "strength": 0.55, "duration_ms": 150}
+      ],
+      "primary_readouts": ["pop_hz", "escw_hz", "body_contact_mean", "body_vx", "fly_state"]
+    },
+    {
+      "id": "stim-gf",
+      "ui_name": "gf",
+      "name": "GF stim",
+      "classification": ["DIRECT-NEURAL"],
+      "purpose": "Reset the brain and directly stimulate the existing Giant Fiber population using the built-in preset values.",
+      "baseline_ms": 1500,
+      "observe_ms": 2000,
+      "steps": [
+        {"phase": "setup", "executor": "swift", "action": "reset_brain"},
+        {"phase": "stimulus", "executor": "swift", "action": "stimulate_population", "role": "GF", "strength": 0.5, "duration_ms": 40}
+      ],
+      "primary_readouts": ["escw_hz", "pop_hz", "fly_state", "body_vx"]
+    },
+    {
+      "id": "stim-dna-left",
+      "ui_name": "dna_left",
+      "name": "DNa-left",
+      "classification": ["DIRECT-NEURAL"],
+      "purpose": "Reset the brain and directly stimulate the left DNa population using the built-in preset values.",
+      "baseline_ms": 1500,
+      "observe_ms": 2500,
+      "steps": [
+        {"phase": "setup", "executor": "swift", "action": "reset_brain"},
+        {"phase": "stimulus", "executor": "swift", "action": "stimulate_population", "role": "DNa-left", "strength": 0.3, "duration_ms": 900}
+      ],
+      "primary_readouts": ["dna_l_hz", "dna_r_hz", "body_yaw_rate", "fly_state"]
+    },
+    {
+      "id": "stim-dna-right",
+      "ui_name": "dna_right",
+      "name": "DNa-right",
+      "classification": ["DIRECT-NEURAL"],
+      "purpose": "Reset the brain and directly stimulate the right DNa population using the built-in preset values.",
+      "baseline_ms": 1500,
+      "observe_ms": 2500,
+      "steps": [
+        {"phase": "setup", "executor": "swift", "action": "reset_brain"},
+        {"phase": "stimulus", "executor": "swift", "action": "stimulate_population", "role": "DNa-right", "strength": 0.3, "duration_ms": 900}
+      ],
+      "primary_readouts": ["dna_l_hz", "dna_r_hz", "body_yaw_rate", "fly_state"]
+    },
+    {
+      "id": "stim-mdn",
+      "ui_name": "mdn",
+      "name": "MDN",
+      "classification": ["DIRECT-NEURAL"],
+      "purpose": "Reset the brain and directly stimulate the existing MDN population using the built-in preset values.",
+      "baseline_ms": 1500,
+      "observe_ms": 2500,
+      "steps": [
+        {"phase": "setup", "executor": "swift", "action": "reset_brain"},
+        {"phase": "stimulus", "executor": "swift", "action": "stimulate_population", "role": "MDN", "strength": 0.3, "duration_ms": 600}
+      ],
+      "primary_readouts": ["mdn_hz", "body_vx", "fly_state"]
+    },
+    {
+      "id": "stim-dnp09",
+      "ui_name": "dnp09",
+      "name": "DNp09",
+      "classification": ["DIRECT-NEURAL"],
+      "purpose": "Reset the brain and directly stimulate the existing DNp09 population using the built-in preset values.",
+      "baseline_ms": 1500,
+      "observe_ms": 3000,
+      "steps": [
+        {"phase": "setup", "executor": "swift", "action": "reset_brain"},
+        {"phase": "stimulus", "executor": "swift", "action": "stimulate_population", "role": "DNp09", "strength": 0.25, "duration_ms": 1200}
+      ],
+      "primary_readouts": ["dnp09_hz", "gait_drive", "body_vx", "fly_state"]
+    }
+  ]
+}
