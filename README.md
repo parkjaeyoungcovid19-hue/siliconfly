@@ -1,315 +1,282 @@
-<p align="center">
-  <img src="assets/fly.png" width="340" alt="SiliconFly — a 3D fruit fly">
-</p>
-
-<h1 align="center">SiliconFly 🪰</h1>
+# SiliconFly V2
 
 <p align="center">
-A 3D fruit fly that lives on your macOS desktop, driven by a live spiking
-simulation of the <b>whole</b> <a href="https://codex.flywire.ai">FlyWire</a>
-brain — all 139,255 neurons, on the GPU, at 1 kHz. It walks across your windows,
-grooms, sleeps, and decides to flee your cursor with the same neurons a real fly
-uses.
+  <strong>A connectome-driven virtual fruit-fly laboratory for macOS.</strong><br>
+  FlyWire whole-brain simulation in Metal, coupled in closed loop to a FlyGym / NeuroMechFly body in MuJoCo.
 </p>
-
-<p align="center"><sub>
-Built on <a href="https://github.com/DenisSergeevitch/desktop-fly">DesktopFly</a> by Denis Shiryaev,
-which contributed the procedural fly body, the behaviour system and the desktop overlay.
-SiliconFly replaces its 668-neuron CPU circuit with the whole connectome on the GPU.
-</sub></p>
 
 <p align="center">
-  <img src="assets/brain.png" width="560" alt="Live brain window: real FlyWire neuron positions, spikes flashing">
+  <img alt="macOS" src="https://img.shields.io/badge/platform-macOS-111111?style=flat-square">
+  <img alt="Swift" src="https://img.shields.io/badge/frontend-Swift%20%2B%20Metal-F05138?style=flat-square">
+  <img alt="FlyGym" src="https://img.shields.io/badge/body-FlyGym%202.1%20%2B%20MuJoCo-5C7CFA?style=flat-square">
+  <img alt="status" src="https://img.shields.io/badge/V2-validated-2E8B57?style=flat-square">
 </p>
 
-<p align="center"><sub>
-The fly's brain window: real neuron soma positions from FlyWire v783, with live
-spikes flashing at real neuron locations. The two glowing yellow markers are the
-Giant Fibers — the escape command neurons. Click any region to stimulate it.
-(This shot predates the whole-brain port; the window now draws all 139,255 somas.)
-</sub></p>
+<p align="center">
+  <img src="docs/images/neuromechfly-v2.jpg" width="900" alt="NeuroMechFly v2 simulated fruit fly navigating an obstacle environment">
+</p>
 
-## What's real
+SiliconFly V2 turns the original SiliconFly desktop fly into an interactive **virtual fly lab**. The brain side runs the shipped FlyWire v783 connectome as a 139,255-neuron spiking network on the GPU. The body side runs a real NeuroMechFly v2 model in FlyGym / MuJoCo. A bidirectional bridge connects neural outputs to locomotion and sends measured body, vision, contact and environmental state back into the neural simulation.
 
-- **The whole connectome runs.** 139,255 neurons, 15,091,983 signed edges and
-  54,492,922 synapses from FlyWire FAFB v783 step as one
-  leaky-integrate-and-fire (LIF) network at **1 kHz** inside a Metal compute
-  shader. Nothing is subsampled — ~95 MB of connectome ships with the repo and
-  every neuron of it is simulated, every millisecond.
-- **The neurons that drive the body are named cells**; the other 138,877 are the
-  network they sit in:
-  - **LC4 (104) + LPLC2 (210)** looming-detector visual neurons
-  - **DNp01 / Giant Fiber (GF) (2)** — the escape command neuron
-  - **DNa01 (2) + DNa02 (2)** steering · **DNp09 (2)** forward walking
-  - **DNg11 (6)** grooming · **MDN (4)** backward walking ("moonwalker")
-  - **DNp02/DNp04/DNp11 (6)** escape-maneuver (wing) neurons
-  - **24 ascending** (leg proprioception) and **16 sensory** (wind/tap) neurons,
-    the two places the body writes back into the brain
-- **The command neurons have no life of their own.** Re-run the same sim with
-  the synaptic weights zeroed and DNa01/02, MDN and DNg11 sit at **0.00 Hz**,
-  the wing DNs at 0.04 Hz; wired up they run at 0.5–50 Hz. Every spike they emit
-  is the connectome's, not a baseline's (`--brainstats`).
-- **Escape is not scripted.** Your cursor's approach becomes looming input to the
-  real LC4/LPLC2 cells. The two Giant Fibers take 9,474 synapses of input
-  between them, excitatory *and* 4 ms-delayed feedforward inhibitory, so a slow
-  approach is tolerated while an abrupt one fires them in **3 ms** — the fly
-  takes off only when DNp01 actually spikes.
+The goal is not to fake convincing animal behavior. V2 is built so that you can see where a response came from: **source → modeled sensor → receptor activity → brain output → controller → measured motion**.
 
-The body itself is procedural (FlyWire is a brain connectome — no body geometry
-exists), with a tripod gait, visible wing-beat, altitude-scaled flight, grooming
-and sleep postures.
+---
 
-## How it works
+## V2 at a glance
 
-```
-data/*.bin  ──►  MetalSim ──► two Metal kernels per simulated ms ──► population
-(CSR graph)      (GPU LIF)     lif_update  +  lif_propagate          rates (EMA)
-                                                                        │
-   fly body ◄── FlyModel ◄── BrainSignals ◄── SignalBuilder ◄───────────┘
-```
+| Layer | Current V2 implementation |
+|---|---|
+| Brain | 139,255 FlyWire neurons, 15,091,983 signed edges, 1 kHz LIF simulation in Metal |
+| Body | FlyGym 2.1 / NeuroMechFly v2 / MuJoCo with real body dynamics and contact feedback |
+| Closed loop | Swift ↔ Python NDJSON bridge with freshness, timing, reconnect and bounded queues |
+| Vision | Real left/right FlyGym eye renders, brightness/occupancy and generic optic-expansion decoding |
+| Olfaction | Food-source geometry → bilateral modeled odor → FlyWire `ORN_DM1` + `ORN_VA2` |
+| Wind | Physical thorax force plus modeled `JO-C*` / `JO-E*` neural drive |
+| Temperature | Environment-only, locomotor-tempo model, or FlyWire `TRN_VP2` / `TRN_VP3a+b` drive |
+| Touch | Physical body-part impulse plus a separately labeled generic neural startle/touch channel |
+| Experiments | Presets, direct neural stimulation, live graphs, markers and CSV/event recording |
 
-Per simulated millisecond, `LIF.metal` runs twice:
+---
 
-1. **`lif_update`** — one thread per neuron: apply the excitation the previous
-   step's spikes delivered, leak toward a per-super-class resting drive, add a
-   noise kick, add sensory drive (loom / gait / air puff / click stimulation),
-   apply the inhibition scheduled 4 ms ago, then threshold and reset.
-2. **`lif_propagate`** — one 32-lane SIMD group per *spiking* neuron, scattering
-   only that neuron's CSR row. At rest ~250 of 139,255 neurons spike per ms, so
-   the step touches a few tens of thousands of edges instead of all 15 million.
+## The lab
 
-Synaptic accumulation is Int32 fixed point (Q16) with integer atomics, so the
-sum is independent of thread order and the whole sim is reproducible from its
-seed. Noise is a PCG hash of `(seed, step, neuron)` rather than a sequential RNG,
-for the same reason — which is what makes an independent CPU reference able to
-reproduce the GPU bit for bit (`--gpucheck`).
+The V2 Lab window is organized around five jobs rather than around implementation details:
 
-Measured on an M4 Pro (`--simtest`, `--brainstats 4`, shipped seed):
+**World** — spawn and move boxes, spheres, walls and food markers; approach objects toward the fly; reset the world or body.
 
-```
-metal-sim: Apple M4 Pro N=139255 E=15091983 load 40 ms compile 1 ms
-population: 1.75 Hz/neuron | 244 spikes/step | 78 µs/step (16-step batches)
-bench 16-step batches: 69 µs/step, 249 spikes/step
-bench  1-step batches: 192 µs/step, 240 spikes/step
-PASS realtime: 16-step batches 69 µs/step (budget 1000)
+**Stimuli** — cover either eye, flash an eye, apply wind, touch the thorax/head/abdomen/legs, and change temperature mode.
+
+**Brain** — directly stimulate selected neural populations such as GF, DNa, MDN, DNp09, DNg11, LC4/LPLC2 and the currently exposed sensory receptor groups.
+
+**Live Data** — inspect source state, receptor drive/spike rates, decoded `BrainSignals`, left/right controller output, packet age, sim/wall timing and measured body motion.
+
+**Experiments** — run built-in looming/wind/touch/direct-neural presets, add trial markers, replay the previous preset and record telemetry to disk.
+
+The UI deliberately separates three kinds of intervention:
+
+- **PHYSICAL** — real MuJoCo geometry or force.
+- **SENSORY-MODEL** — an explicit engineering transduction into identified neural populations.
+- **DIRECT-NEURAL** — current injection that bypasses the sensory transduction step.
+
+That distinction matters: a physical touch to the left front leg is a body-specific MuJoCo event, while the current V2 neural touch path is only a **generic modeled startle/touch channel**. The UI does not present those as the same thing.
+
+---
+
+## Closed-loop architecture
+
+```mermaid
+flowchart LR
+    W[Lab world / rendered eyes] --> P[FlyGym + MuJoCo body]
+    P -->|body packet\nvision · contacts · odor · timing| B[Swift bridge]
+    B --> S[Modeled sensory transduction]
+    S --> M[MetalSim\n139,255-neuron FlyWire network]
+    M --> D[Decoded BrainSignals]
+    D -->|walk · turn · escape · backward · tempo| C[FlyGym controller]
+    C --> P
 ```
 
-The render loop steps the sim in 8–50 ms batches, so the 16-step number is the
-one that matters: **69–78 µs of wall time per simulated millisecond, ~13–14×
-faster than real time**. Startup is ~40 ms to parse, validate and upload the
-connectome plus ~1 ms to compile the shader (`LIF.metal` is compiled at runtime;
-a cold shader cache costs ~85 ms once). Peak resident memory is ~240 MB.
+The bridge does not substitute a procedural translation for real FlyGym locomotion. In real-body mode the physical motion comes from the FlyGym controller and MuJoCo simulation. Stale body feedback is rejected rather than silently replayed as current sensory state.
 
-The brain window draws all 139,255 somas as a single point cloud coloured by
-super-class, the 378 role-tagged neurons as an overlay, and flashes spikes
-sampled off the GPU each step.
+---
 
-## Installation
+## What you can test
 
-Requirements: an **Apple Silicon Mac**, **macOS 15+** (the shader is compiled
-with `MTLCompileOptions.mathMode`), and the Xcode Command Line Tools. Built and
-tested on macOS 26.6.1 / M4 Pro / Swift 6.2.1. `build.sh` is bare `swiftc` — no
-Xcode project, and no Metal toolchain, since `LIF.metal` is compiled at runtime.
-Python is needed only to regenerate `data/`.
+### Vision and looming
 
-No permissions or entitlements are required — everything it senses (cursor,
-window frames, clicks-as-taps, thermal state) is permission-free.
+The fly uses FlyGym's rendered left/right eye frames. V2 measures brightness and occupancy and also estimates outward edge motion from the raw frames after compensating for small whole-frame translation. The generic optic-expansion estimator is useful for arbitrary rendered objects; it is an **engineering approximation**, not a biological reconstruction of retinal motion processing.
+
+Regression tests explicitly suppress common false loom cases including contraction, camera pan and full-field flash. Covering and reopening either eye is also tested through the real rendered path.
+
+### Food / odor
+
+Food markers are physical scene markers with a modeled odor source. Concentration is computed from source geometry and fly pose, split bilaterally, then injected into identified FlyWire `ORN_DM1` + `ORN_VA2` populations. Removing the source or receiving stale body feedback clears the drive.
+
+There is intentionally **no taste, reward, feeding, or scripted food-seeking behavior** in V2.
+
+### Wind
+
+Wind can independently enable:
+
+- a physical force on the MuJoCo thorax;
+- a modeled sensory path into outgoing `JO-C*` / `JO-E*` populations.
+
+The wind direction → neural current mapping is a model assumption, not a measured antennal transfer function.
+
+### Touch
+
+Touch can apply a real impulse to the thorax, head, abdomen, or any named leg. The current neural side is deliberately labeled as a generic modeled startle/touch channel rather than body-part-specific tactile physiology.
+
+### Temperature
+
+V2 exposes three modes:
+
+- `environment_only` — records temperature; no neural input;
+- `modeled_physiology` — adjusts locomotor tempo through the real FlyGym controller;
+- `flywire_sensory` — drives identified warm/cool FlyWire populations (`TRN_VP2`, `TRN_VP3a`, `TRN_VP3b`).
+
+---
+
+## Quick start
+
+### Requirements
+
+- Apple Silicon Mac
+- Xcode Command Line Tools / Swift toolchain
+- Python 3.12
+- FlyGym 2.1.0 and its MuJoCo dependencies
+
+### 1. Clone and build
 
 ```sh
-git clone https://github.com/dawsonamf/siliconfly.git
+git clone https://github.com/parkjaeyoungcovid19-hue/siliconfly.git
 cd siliconfly
 ./build.sh
-./SiliconFly
 ```
 
-A 🪰 item appears in the menu bar; quit from there. The fly wanders your desktop
-on a transparent, click-through overlay — it never intercepts your mouse or
-keyboard.
-
-## Controls (menu bar 🪰)
-
-| item | effect |
-|---|---|
-| Pause / Resume | freeze the world |
-| Show/Hide Brain | toggle the live brain window |
-| Escape Test (loom) | inject a looming stimulus, watch the GF fire |
-| Move to Next Display | hop the fly across monitors (shown when >1 display) |
-| Add / Remove Fly | extra flies (only fly #1 carries the brain) |
-| Scare Flies | startle everyone |
-
-**The brain window is interactive**: hovering pauses the rotation; clicking
-"optogenetically" stimulates up to 400 somas within 0.6 world units of the click
-for 400 ms. The fly's reaction is whatever the real network does downstream —
-click the Giant Fiber and it escapes; click DNg11 and it grooms; click one side's
-DNa01/02 and it turns.
-
-## How real neurons drive the body
-
-| body behavior | driven by | population | its wired input |
-|---|---|---|---|
-| escape takeoff | DNp01 spike | 2 | 9,474 syn / 962 edges |
-| walk vs. rest, walking speed | DNp09 rate | 2 | 10,287 syn / 1,362 edges |
-| steering | DNa01+DNa02 left−right rate difference | 2 + 2 | 12,495 + 25,427 syn |
-| grooming | DNg11 rate | 6 | 3,535 syn / 589 edges |
-| backward scoot | MDN rate above 60 Hz | 4 | 10,519 syn / 1,772 edges |
-| wing-beat effort, threat wing-raise | DNp02/04/11 rate | 6 | 19,253 syn / 3,225 edges |
-| nervous darting | LC4/LPLC2 population rate | 104 + 210 | 1,885 syn / 293 edges onto the GF |
-| spontaneous takeoff | whole-population rate | 139,255 | — |
-
-Those in-degrees are the point of the port: in the old 668-neuron circuit DNg11
-received **6** synapses and was effectively noise-driven; it now receives 3,535.
-In threshold units (1.0 = one presynaptic volley fires the cell from rest) the
-`--brainstats` in-weight audit reads `dnaL +17.46/−11.47`, `fwd +9.87/−6.57`,
-`gf +2.30/−0.91` excitatory/inhibitory — every population is a live tug-of-war,
-not a feed-forward wire.
-
-The loop also closes body→brain: the gait rhythm feeds 24 real ascending
-(proprioceptive) neurons in phase with the legs, and fast cursor motion
-stimulates 16 sensory (wind) neurons.
-
-## Desktop ecology (all permission-free macOS senses)
-
-- **Window terrain**: window top edges are ledges — the fly lands on them,
-  walks along them, rides a window you drag, and startles when one closes
-  under its feet.
-- **Window looms**: a window appearing near the fly feeds the looming
-  pathway; the circuit decides whether to flee your dialogs.
-- **Clicks are substrate taps**; clicking next to the fly startles it through
-  the wind→GF pathway. **Typing is vibration** (idle-time API — knows *when*
-  keys were pressed, never which).
-- **Circadian rhythm**: dawn/dusk activity peaks, midday siesta, night
-  quiescence. **Sleep**: idle at night → it sleeps, breathing slowly, with
-  raised arousal threshold; it grooms after waking.
-- **Temperature**: flies are ectotherms — a hot Mac is a faster fly.
-
-## Regenerating the data
-
-`data/` ships the whole FAFB v783 connectome as compact binaries:
-
-| file | size | contents |
-|---|---|---|
-| `connectome.json` | 122 kB | manifest: array layout, string tables, normalization, provenance, sha256s |
-| `neurons.bin` | 4.2 MB | per-neuron `pos`/`superClass`/`side`/`nt`/`role`/`cellType`/`rootId` + CSR `rowStart` |
-| `synapses.bin` | 90.6 MB | CSR `colIdx` (uint32) + signed synapse `weight` (int16) |
-
-139,255 neurons, 15,091,983 edges, 54,492,922 synapses. Every array is
-16-byte aligned, little-endian, and described by `connectome.json` — that
-manifest is the loader's contract, not the file order.
-
-To rebuild from the raw sources (~160 MB download):
+### 2. Create the FlyGym environment
 
 ```sh
-mkdir -p cache/flywire783 && cd cache/flywire783
-B=https://storage.googleapis.com/flywire-data/codex/data/fafb/783
-curl -O "$B/classification.csv.gz" -O "$B/coordinates.csv.gz" \
-     -O "$B/consolidated_cell_types.csv.gz" -O "$B/neurons.csv.gz"
-curl -LO https://github.com/eonsystemspbc/fly-brain/raw/main/data/2025_Connectivity_783.parquet
-cd -
-/opt/anaconda3/bin/python3 etl.py cache/flywire783    # ~4 s
-/opt/anaconda3/bin/python3 tools/verify_data.py data  # exits non-zero on any problem
+/opt/homebrew/opt/python@3.12/bin/python3.12 -m venv flygym-venv
+./flygym-venv/bin/pip install -r flygym_bridge/requirements.txt
 ```
 
-The ETL needs **numpy + pyarrow**, so it must run under a real Python
-(Anaconda above); macOS's stock `python3` has neither. `--min-syn N` prunes
-weak pairs (default 1 = keep everything); `--out DIR` redirects the output.
-`tools/verify_data.py` re-reads the binaries from the manifest alone, checks
-the CSR invariants, and re-derives three edges from the parquet.
+If your Python 3.12 lives somewhere else, use that interpreter instead.
 
-Synapse weights are signed per presynaptic neuron (Dale's law): from the Codex
-`nt_type` where it exists (ACH/DA/SER/OCT excitatory, GABA/GLUT inhibitory),
-and from the parquet's own `Excitatory` call for the 18,314 wired neurons Codex
-leaves unlabelled — 5,700 of those turn out inhibitory. Ahead of that, 94
-`nt_type`-less antennal-lobe local interneurons (`primary_type` matching
-`^(lLN|il3LN|v2LN)`) are forced inhibitory, since that family is canonically
-GABA/Glut and signing it excitatory pins the sim at its refractory ceiling.
-Neurons that do have a Codex `nt_type` are never overridden. The `nt` byte stays
-`UNKNOWN` for them, so an `UNKNOWN` neurotransmitter never implies an
-excitatory weight. `connectome.json` records the rule in `signPolicy`.
+### 3. Launch the full V2 lab
 
-## Diagnostics
+From Finder, the recommended entry point is:
+
+```text
+SiliconFly 실험실.command
+```
+
+CLI equivalent:
 
 ```sh
-./SiliconFly --simtest         # sim invariants at whole-brain scale + throughput bench (~10 s)
-./SiliconFly --behaviortest    # 17 end-to-end checks: stimulate neurons -> body reacts
-./SiliconFly --gpucheck        # GPU sim vs an independent CPU reference, bit for bit (~12 s)
-./SiliconFly --brainstats 4    # 4 s of rest: rates by super class / role / cell type (~2 s)
-./SiliconFly --snapshot f.png  # offscreen fly render
-./SiliconFly --brainshot b.png # offscreen brain render
-./SiliconFly --seed 0x1234     # pin the sim seed for any of the above
+./run_flygym.sh --flygym
 ```
 
-`--simtest` exits non-zero if any of these stops holding: the Giant Fiber is
-**silent over 4 s of rest**, it **fires under an abrupt loom** (3 ms on the
-shipped seed), the walk drive **fluctuates** instead of latching, a click
-stimulation of the GF cluster **reaches the body**, the siesta (`activityScale`
-0.84) leaves walk drive on **more than 3 %** of the time, the GPU's spike list
-agrees with its own membrane/refractory/histogram state, and 16-step batches stay
-**under the 1 ms real-time budget**. It also prints the numbers the tuning pass
-watches but does not assert: loom latency (single-digit ms) and walk duty
-(20–50 %).
+The launcher starts the Python bridge, the real FlyGym / MuJoCo backend, SiliconFly and the Lab window. A cold FlyGym viewer launch can take a while to prewarm; SiliconFly keeps retrying the connection while the backend initializes.
 
-`--gpucheck` re-derives all 15,091,983 quantized weights, replays a battery of
-scenarios against a CPU reference written from the pre-port sim, and checks
-spikes, refractory state, group histograms, rate EMAs and every membrane
-potential each step — currently bit-identical (`0 differ`, `ref 179688 spikes,
-gpu 179688 spikes`).
+For development without the real body:
 
-Diagnostic modes use the shipped seed so they are reproducible; the app itself
-draws a fresh seed per launch, so two launches are not the same fly.
+```sh
+./run_flygym.sh --mock
+```
 
-## What's modeled vs. measured
+---
 
-The connectome gives wiring, not physiology. What FlyWire measured: who connects
-to whom, with how many synapses, and each neuron's predicted neurotransmitter.
-Everything below is a modeling choice layered on that graph.
+## Recording experiments
 
-- **LIF dynamics**: one shared 20 ms membrane time constant, threshold 1,
-  2 ms refractory period, one global weight scale (0.0032 per synapse). Real
-  neurons differ in all of these.
-- **Signs**: Dale's law per presynaptic neuron, from the Codex `nt_type`; a
-  parquet fallback for the 18,314 wired neurons it leaves unlabelled; and an
-  explicit inhibitory prior for 94 antennal-lobe local interneurons (see
-  "Regenerating the data"). Modulatory synapses (DA/SER/OCT) are scaled ×0.5
-  rather than modelled as neuromodulation.
-- **The Giant Fiber gets three separate input gains**: its documented electrical
-  coupling from LC4/LPLC2 and from the wind-sensitive afferents is boosted, and
-  its ~3,800 ordinary chemical synapses per cell are scaled *down* (×0.12).
-  Without that third gain a LIF with one threshold for everybody makes in-degree
-  a proxy for excitability, and the giant fiber — which collects far more input
-  than a median neuron — fires spontaneously. It is a model fix, not a connectome
-  fix.
-- **Resting drive and noise are invented.** There is no photoreceptor input, no
-  sensory periphery beyond the loom, gait and wind pathways wired in by hand, and
-  no neuromodulatory state,
-  so each neuron gets a small per-super-class resting drive and a stochastic
-  membrane kick to keep the brain alive. The whole-brain rate at rest, 1.75 Hz
-  per neuron, is a consequence of those two knobs, not a measurement.
-- **One delay for inhibition.** Excitation arrives on the next step; inhibition
-  arrives 4 ms later. Real conduction delays vary per connection and are unknown.
-- **No VNC and no body physics.** FlyWire is a brain connectome; the ventral
-  nerve cord that actually drives the legs is not in it. Descending-neuron rates
-  are read out as commands and the gait, flight and grooming are procedural.
-- **No spike-frequency adaptation, no synaptic plasticity, no gap junctions**
-  beyond the two GF boosts above.
-- **The escape race is a race, and it is only half honest.** Under a *sustained*
-  artificial loom the GF fires 147 times in 400 ms, which no real fly does; the
-  body uses the first spike and ignores the rest. The behaviour it produces
-  (fast lunge → takeoff, slow approach → tolerated) is right; the spike train
-  under a held stimulus is not.
+The Lab can record trials under:
 
-## License & citation
+```text
+~/Documents/SiliconFlyExperiments/experiment-YYYYMMDD-HHMMSS/
+├── metadata.json
+├── events.jsonl
+└── telemetry.csv
+```
 
-Code is MIT, copyright Denis Shiryaev and Dawson Metzger-Fleetwood: this repo
-began as [DesktopFly](https://github.com/DenisSergeevitch/desktop-fly) and keeps
-its full git history, so `git log` and `git blame` show which lines came from where.
-The files in `data/` are derived from FlyWire (FAFB v783) and
-are **CC BY-NC 4.0** — see [data/DATA_LICENSE.md](data/DATA_LICENSE.md).
-The aggregated connectivity table comes from
-[eonsystemspbc/fly-brain](https://github.com/eonsystemspbc/fly-brain)
-(FlyWire `proofread_connections_783`, [Zenodo 10676866](https://doi.org/10.5281/zenodo.10676866)).
-[webgpu-fly](https://github.com/abgnydn/webgpu-fly) (MIT) was read as a design
-reference for running the full connectome as a LIF network on a GPU.
-If you use this, cite:
+Telemetry includes neural rates, modeled sensory drive, receptor EMA spike rates, decoded brain state, controller output, body velocity/contact state, vision values, body packet age and simulation timing. `Baseline`, `Stimulus ON`, `Stimulus OFF`, and `Observation` markers make repeated trials easier to compare later.
 
-- Dorkenwald, S. et al. *Neuronal wiring diagram of an adult brain.* Nature 634, 124–138 (2024). https://doi.org/10.1038/s41586-024-07558-y
-- Schlegel, P. et al. *Whole-brain annotation and multi-connectome cell typing of Drosophila.* Nature 634, 139–152 (2024). https://doi.org/10.1038/s41586-024-07686-5
+---
+
+## Validation status
+
+The current V2 tree has been exercised through the full Swift and Python regression set, including the real MuJoCo body and rendered-eye path:
+
+```sh
+./build.sh
+./SiliconFly --labtest
+./SiliconFly --bridgetest
+./SiliconFly --simtest
+./SiliconFly --behaviortest
+
+./flygym-venv/bin/python flygym_bridge/test_bridge.py
+./flygym-venv/bin/python flygym_bridge/test_lab.py
+./flygym-venv/bin/python flygym_bridge/test_lab_real.py
+./flygym-venv/bin/python flygym_bridge/test_vision_real.py
+```
+
+The final full launcher validation on the development M2 Air sustained roughly **40–41 body packets/s**, **~60 brain packets/s**, no long stale-body gaps, and approximately **0.79–0.83× simulation-time / wall-time** while the real viewer and GUI were open. The UI explicitly reports degraded body feedback if it drops below 30 Hz.
+
+These measurements are machine-specific observations, not a guaranteed benchmark.
+
+---
+
+## What is measured, what is modeled
+
+SiliconFly V2 combines real data, simulation and explicit engineering mappings. Those are not interchangeable.
+
+**Directly grounded in existing data / runtime state**
+
+- FlyWire v783 neural identities and connectivity shipped with the repository;
+- real FlyGym / MuJoCo body state and contacts;
+- real rendered eye frames from the FlyGym cameras;
+- actual bridge timing/freshness and controller output;
+- actual receptor/network spikes produced by the implemented simulation after a modeled input is injected.
+
+**Engineering/modeling assumptions in V2**
+
+- scalar odor → neural current gain;
+- temperature → TRN current mapping;
+- wind direction/strength → JO-C/E current mapping;
+- generic touch/startle neural channel;
+- raw-frame optic-expansion estimator;
+- descending-neuron readout → FlyGym locomotor-controller mapping.
+
+The project is therefore best used for **controlled comparisons inside the same model** rather than as a claim that every intermediate quantity is a measured biological transfer function.
+
+---
+
+## Repository map
+
+```text
+.
+├── main.swift                     app coordinator / brain ↔ body loop
+├── MetalSim.swift                 GPU FlyWire spiking simulation
+├── FlyGymBridge.swift             Swift TCP bridge and body feedback
+├── LabWindow.swift                Virtual Fly Lab UI
+├── LabProtocol.swift              lab state / telemetry / tests
+├── ExperimentRecorder.swift       events + CSV recording
+├── flygym_bridge/
+│   ├── bridge.py                  Python server
+│   ├── fly_body.py                mock + real FlyGym body
+│   ├── lab_world.py               world / stimuli / source state
+│   ├── vision_decoder.py          rendered-eye decoder
+│   └── test_*.py                  Python regression suite
+├── VIRTUAL_FLY_LAB_GUIDE.md       full V2 user guide
+├── VIRTUAL_FLY_LAB_V2_FIX_PLAN.md repaired V2 defect checklist
+└── VIRTUAL_FLY_LAB_V3_PLAN.md     future work; not implemented in V2
+```
+
+For detailed controls and exact preset values, see **[VIRTUAL_FLY_LAB_GUIDE.md](VIRTUAL_FLY_LAB_GUIDE.md)**. Bridge internals and protocol details are in **[flygym_bridge/README.md](flygym_bridge/README.md)**.
+
+---
+
+## Upstream work and credits
+
+This repository started from **[SiliconFly](https://github.com/dawsonamf/siliconfly)** by Dawson Metzger-Fleetwood, which itself credits **[DesktopFly](https://github.com/DenisSergeevitch/desktop-fly)** by Denis Shiryaev for the original desktop fly / overlay foundation.
+
+V2 additionally integrates:
+
+- **[FlyWire](https://codex.flywire.ai/)** connectome data;
+- **[FlyGym / NeuroMechFly v2](https://neuromechfly.org/)** by the Ramdya Lab / EPFL;
+- **[MuJoCo](https://mujoco.org/)** for body physics.
+
+Please cite the relevant upstream projects and papers when using their data or models in research.
+
+### Images used in this README
+
+- `docs/images/neuromechfly-v2.jpg` — simulated NeuroMechFly v2 scene, credit **Ramdya laboratory, EPFL**, **CC BY-SA 4.0**: <https://actu.epfl.ch/news/simulating-how-fruit-flies-see-smell-and-navigat-4>.
+- `docs/images/drosophila-melanogaster.jpg` — *Drosophila melanogaster* photograph by **Alexis** (`alexis_orion` on iNaturalist), **CC BY 4.0**, Wikimedia Commons: <https://commons.wikimedia.org/wiki/File:Drosophila_melanogaster_53362116.jpg>.
+
+<p align="center">
+  <img src="docs/images/drosophila-melanogaster.jpg" width="520" alt="Real Drosophila melanogaster">
+</p>
+
+---
+
+## License
+
+Source code is MIT-licensed as described in [LICENSE](LICENSE). Connectome-derived data under `data/` has separate licensing; see `data/DATA_LICENSE.md`.
