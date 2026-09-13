@@ -28,7 +28,7 @@ Brain->body `{type:brain,t,walk,turn,escape,backward,groom,wing,arousal,tempo,sl
 - `build.sh` (edit): add FlyGymBridge.swift.
 - `flygym_bridge/` (new): `protocol.py`, `neural_decoder.py`, `vision_decoder.py`, `fly_body.py` (mock + real), `environment.py` (`ArenaConfig`), `bridge.py` (`--mock`, `--flygym` real), `requirements.txt`, `README.md`, `test_bridge.py`.
 - `run_flygym.sh` (new): venv + bridge + Swift app, cleanup on exit.
-- `PERFORMANCE_FLYGYM.md`: measured only, never fabricated.
+- `../reports/PERFORMANCE_FLYGYM.md`: measured only, never fabricated.
 
 ## 4. Phases
 

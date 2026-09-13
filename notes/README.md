@@ -23,4 +23,4 @@ measured and why each number is what it is; they are not user documentation
 | `brainshot*.png` | brain-window renders from the tuning and BrainView passes (`before`/`after`, `tuned`/`tuned2`) |
 | `tuning-runs/` | raw `--brainstats` / `--simtest` captures from every tuning iteration |
 
-See also `../WRITEUP.md` — the full narrative writeup of the port (state before, what was done, state now, future directions).
+See also `../docs/history/WRITEUP.md` — the full narrative writeup of the port (state before, what was done, state now, future directions).

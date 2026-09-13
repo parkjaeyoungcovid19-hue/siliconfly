@@ -1,8 +1,8 @@
 # Virtual Fly Lab — 모듈형 전뇌파리 장기 로드맵 (V3–V16+)
 
-상태: **V3 IMPLEMENTATION COMPLETE / V4+ PLANNED** · 수정: 2026-09-13
+상태: **V3 IMPLEMENTATION COMPLETE / V4 READY TO IMPLEMENT / V5+ PLANNED** · 수정: 2026-09-13
 기준: V2 `447f7e234f91ec44da4e2e68ada50a00859f4375`
-정본: Git 저장소의 `siliconfly/VIRTUAL_FLY_LAB_ROADMAP.md`. V3의 실제 작업 범위는 별도 `VIRTUAL_FLY_LAB_V3_PLAN.md`만 따른다.
+정본: Git 저장소의 `docs/plans/VIRTUAL_FLY_LAB_ROADMAP.md`. 각 버전의 실제 작업 범위는 같은 폴더의 버전별 구현 계획을 따른다.
 
 **이 문서는 여러 버전에 걸친 목표 계약이다. 아래 기능 전체를 V3에서 구현하지 않는다.** 사용자 요청에 따라 버전별 작은 변경과 검증을 우선한다. 일정이나 버전 번호보다 안정성 gate를 우선하며 필요하면 버전을 더 쪼갠다.
 
@@ -43,7 +43,7 @@
 | 버전 | 하나의 중심 목표 | 범위 / 완료 기준 | 후속 버전까지 미루는 것 |
 |---|---|---|---|
 | **V3** | V2 안정화 + 최소 모듈 경계 | GPU/TCP 검사 실패 원인 해결, 저장 종료/실행 경로 수정, 기존 감각·motor 경계만 추출, V2 parity | 새 감각, 새 UI, checkpoint, 외부 자산 |
-| **V4** | 시간과 세션 수명주기 | 고정 tick/lockstep, pause barrier, epoch, applied command 기록; render FPS가 실험 결과를 바꾸지 않음 | 디스크 저장과 새로운 physics |
+| **V4** | 시간과 세션 수명주기 | [V4 구현 계약](VIRTUAL_FLY_LAB_V4_PLAN.md): 고정 tick/lockstep, pause barrier, epoch, applied command 기록; render FPS가 실험 결과를 바꾸지 않음 | checkpoint 저장과 새로운 physics |
 | **V5** | 같은 실험 이어하기 | 전체 세션 checkpoint, atomic save/restore, 새 프로세스 continuation 동등성 | 다른 world로 이식, 범용 외부 asset |
 | **V6** | 개체 교환·이식 | `.flyindividual` + ID/계보/복제, 기존 built-in arena 사이 이식; 뇌 상태 보존/옛 감각 제거 | mesh import, 여러 개체 동시 구동 |
 | **V7** | 선언형 외부 월드 | primitive `.flyworld` JSON, 단위/충돌/재질, staged compile/rollback, export/import roundtrip | GLB converter, 복잡한 동적 도구 |

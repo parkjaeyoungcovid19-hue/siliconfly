@@ -3,7 +3,7 @@
 상태: **IMPLEMENTATION COMPLETE / USER VALIDATION PENDING** · 완료: 2026-09-13
 기준 커밋: `447f7e234f91ec44da4e2e68ada50a00859f4375`
 
-현재 진행: A–E 구현과 자동/real-headless 회귀는 완료했다. 커밋 `31bd106`에 대한 독립 검증에서 발견된 recorder 실패 시 Quit 승인(P1)과 10× 늦은 source expiry 허용(P2)도 후속 수정 및 fault-injection 재검증을 완료했다. 실제 viewer+GUI 시작/연결 smoke도 완료했다. 기록 중 정상 메뉴 Quit의 마지막 물리적 메뉴 조작은 사용자가 별도로 검증하기로 했으므로 구현 완료와 외부 검증을 분리한다. 정확한 결과와 한계는 `V3_COMPLETION_REPORT.md`와 `V3_VERIFICATION_REPORT_2026-09-13.md`에 기록한다.
+현재 진행: A–E 구현과 자동/real-headless 회귀는 완료했다. 커밋 `31bd106`에 대한 독립 검증에서 발견된 recorder 실패 시 Quit 승인(P1)과 10× 늦은 source expiry 허용(P2)도 후속 수정 및 fault-injection 재검증을 완료했다. 실제 viewer+GUI 시작/연결 smoke도 완료했다. 기록 중 정상 메뉴 Quit의 마지막 물리적 메뉴 조작은 사용자가 별도로 검증하기로 했으므로 구현 완료와 외부 검증을 분리한다. 정확한 결과와 한계는 `../reports/V3_COMPLETION_REPORT.md`와 `../reports/V3_VERIFICATION_REPORT_2026-09-13.md`에 기록한다.
 
 ## 1. 이번 버전의 목표
 
@@ -15,7 +15,7 @@
 
 ## 2. 착수 전 확인된 문제
 
-2026-09-13 원본 커밋에서 검증했다. 자세한 명령/한계는 [최종 점검 보고서](V2_FINAL_AUDIT_2026-09-13.md)를 따른다.
+2026-09-13 원본 커밋에서 검증했다. 자세한 명령/한계는 [최종 점검 보고서](../reports/V2_FINAL_AUDIT_2026-09-13.md)를 따른다.
 
 | 우선순위 | 근거 | V3에서 처리할 일 |
 |---|---|---|

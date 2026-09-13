@@ -222,7 +222,7 @@ V3 implementation and the follow-up fixes from the independent verification repo
 - a fresh real viewer + GUI launch connected successfully and sustained roughly 39–41 body packets/s, ~60 brain packets/s and ~0.79–0.81× simulation/wall time during this smoke run.
 - V2 source→sensory-drive transforms now live behind `SensoryModel.swift`, and neural-rate→body-command readout lives behind `MotorReadout.swift`; frozen V2 formula oracles plus same-seed downstream neural-state parity prove the extraction did not change model behavior.
 
-The 2026-09-13 GUI smoke was terminated from the validation terminal after confirming startup/connectivity; it did **not** count as an end-to-end GUI recording + normal-menu-Quit test. The user will perform that final manual validation separately. See `V3_COMPLETION_REPORT.md` for implementation evidence and `V3_VERIFICATION_REPORT_2026-09-13.md` for the independent verification findings, fault injection and remediation status.
+The 2026-09-13 GUI smoke was terminated from the validation terminal after confirming startup/connectivity; it did **not** count as an end-to-end GUI recording + normal-menu-Quit test. The user will perform that final manual validation separately. See `docs/reports/V3_COMPLETION_REPORT.md` for implementation evidence and `docs/reports/V3_VERIFICATION_REPORT_2026-09-13.md` for the independent verification findings, fault injection and remediation status.
 
 ---
 
@@ -269,15 +269,16 @@ The project is therefore best used for **controlled comparisons inside the same 
 │   ├── lab_world.py               world / stimuli / source state
 │   ├── vision_decoder.py          rendered-eye decoder
 │   └── test_*.py                  Python regression suite
-├── VIRTUAL_FLY_LAB_GUIDE.md       full V2 user guide
-├── VIRTUAL_FLY_LAB_V2_FIX_PLAN.md repaired V2 defect checklist
-├── VIRTUAL_FLY_LAB_V3_PLAN.md     completed V3 implementation contract
-├── V3_COMPLETION_REPORT.md         V3 validation evidence / limitations
-├── V3_VERIFICATION_REPORT_2026-09-13.md independent V3 verification + remediation
-└── VIRTUAL_FLY_LAB_ROADMAP.md     V4+ long-term platform roadmap
+├── docs/
+│   ├── guides/                     launch + user guides
+│   ├── plans/                      version plans and long-term roadmap
+│   ├── reports/                    audits, verification and performance evidence
+│   ├── reference/                  API/runtime inspection notes
+│   └── history/                    historical implementation writeups
+└── flygym_bridge/README.md         bridge internals and protocol notes
 ```
 
-For detailed controls and exact preset values, see **[VIRTUAL_FLY_LAB_GUIDE.md](VIRTUAL_FLY_LAB_GUIDE.md)**. Bridge internals and protocol details are in **[flygym_bridge/README.md](flygym_bridge/README.md)**.
+For detailed controls and exact preset values, see **[Virtual Fly Lab guide](docs/guides/VIRTUAL_FLY_LAB_GUIDE.md)**. The active version roadmap and V4 implementation contract are under **[docs/plans](docs/plans/)**. Bridge internals and protocol details are in **[flygym_bridge/README.md](flygym_bridge/README.md)**.
 
 ---
 

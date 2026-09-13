@@ -30,7 +30,7 @@
 
 수정 권고: command 적용 simulation tick 또는 각 source 시작 tick과 duration에서 만료를 정하고, physics step/telemetry cadence에 근거한 제한된 오차만 허용한다. 타이머 정지·10배 지연·조기 종료를 각각 거부하고, 느린 wall-time 진행은 허용해야 한다.
 
-[10배 지연을 놓친 로그](notes/validation/v3-independent-2026-09-13/labloop_tenfold_duration.txt), [타이머 정지 탐지 로그](notes/validation/v3-independent-2026-09-13/labloop_frozen.txt). 재현 스크립트는 같은 폴더의 `fault_server.py`, `fault_verify.py`다. 빈 17841 포트에서 저장소 루트 경로를 인자로 실행한다.
+[10배 지연을 놓친 로그](../../notes/validation/v3-independent-2026-09-13/labloop_tenfold_duration.txt), [타이머 정지 탐지 로그](../../notes/validation/v3-independent-2026-09-13/labloop_frozen.txt). 재현 스크립트는 같은 폴더의 `fault_server.py`, `fault_verify.py`다. 빈 17841 포트에서 저장소 루트 경로를 인자로 실행한다.
 
 ## 재실행한 검사
 
@@ -77,6 +77,6 @@ P1 실패 종료 처리 → P2 만료 판정 및 음성 대조 → 정상/실패
 - **P2 수정:** `--labloop` expiry 검사를 단순 “목표 이후 언젠가 0”에서 **bounded simulation-time window**로 변경했다. 첫 active body packet의 `simTime`과 실제 `simDt`를 이용해 300 ms 요청의 허용 오차를 계산하며, source가 너무 빨리 0이 되거나 상한을 넘도록 계속 active면 즉시 실패한다. wall deadline은 여전히 hang guard일 뿐 합격 범위가 아니다.
 - **fault injection 재검증:** 정상 mock 및 real-headless는 PASS. `pre_step(0)` timer freeze, duration 10×, duration 0.1×는 모두 `--labloop` exit 1로 탐지됐다. 10× 사례는 이전처럼 약 3 s까지 기다리지 않고 허용 simulation-time 상한을 넘는 즉시 실패한다.
 - **전체 회귀:** `--bridgetest`, `--labtest`, `--simtest`, `--behaviortest`, `--gpucheck`, data verifier, Python bridge/lab/preset, real lab, real vision이 모두 다시 exit 0이었다.
-- **문서 정합성:** `V3_COMPLETION_REPORT.md`의 “V3 commit 미생성” 문구를 실제 구현 커밋 `31bd106` 기준 rollback 절차로 수정했다.
+- **문서 정합성:** `docs/reports/V3_COMPLETION_REPORT.md`의 “V3 commit 미생성” 문구를 실제 구현 커밋 `31bd106` 기준 rollback 절차로 수정했다.
 
 남은 항목은 사용자가 별도로 수행하기로 한 **실제 GUI 메뉴에서 recording 중 Quit을 직접 누르는 수동 smoke**다. 자동 회귀는 성공/실패 termination reply 정책을 검증하지만, 이 보고서는 물리적 메뉴 클릭까지 수행했다고 주장하지 않는다.

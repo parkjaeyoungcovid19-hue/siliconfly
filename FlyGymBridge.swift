@@ -1,7 +1,7 @@
 // FlyGymBridge.swift — localhost TCP bridge between the Metal brain and a
 // Python FlyGym body. Swift is the CLIENT, Python `bridge.py` is the SERVER.
 //
-// Design constraints (see PLAN_FLYGYM.md):
+// Design constraints (see docs/plans/PLAN_FLYGYM.md):
 // - The Metal brain stays authoritative at 1 kHz. Only compact population
 //   signals cross the process boundary (~50-100 Hz BrainSignals).
 // - Socket I/O NEVER runs on the render thread. A sender thread ships the

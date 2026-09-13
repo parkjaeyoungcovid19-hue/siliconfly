@@ -148,5 +148,5 @@ CLI equivalents / diagnostics:
 ```
 
 Use `--flygym-headless` in place of `--flygym` to run the real body without a
-viewer. Measured details are in `../PERFORMANCE_FLYGYM.md`; installed API evidence
-is in `../FLYGYM_API_INSPECTION.md`.
+viewer. Measured details are in `../docs/reports/PERFORMANCE_FLYGYM.md`; installed API evidence
+is in `../docs/reference/FLYGYM_API_INSPECTION.md`.

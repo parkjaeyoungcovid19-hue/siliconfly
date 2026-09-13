@@ -8,7 +8,7 @@ V3 implementation commit: `31bd106` (`Complete Virtual Fly Lab V3 stabilization`
 
 ## Scope completed
 
-V3 followed `VIRTUAL_FLY_LAB_V3_PLAN.md` and intentionally stayed inside the stabilization/minimal-boundary scope. It did not add humidity, taste, checkpointing, package import, a new neuron inspector, lockstep sessions, or other V4+ work.
+V3 followed `docs/plans/VIRTUAL_FLY_LAB_V3_PLAN.md` and intentionally stayed inside the stabilization/minimal-boundary scope. It did not add humidity, taste, checkpointing, package import, a new neuron inspector, lockstep sessions, or other V4+ work.
 
 ### A — independent GPU reference
 
@@ -46,7 +46,7 @@ The recorder metadata format string remains V2-compatible intentionally because 
 ### D — launch/deployment path
 
 - `Makefile` now builds/runs `ThongpariFlyNeuronSim`; it no longer launches the inherited `SiliconFly` binary.
-- `LAUNCHERS.md` and README launch instructions match the current executable.
+- `docs/guides/LAUNCHERS.md` and README launch instructions match the current executable.
 - A separate clean source copy with old binaries removed builds successfully and `make -n run` resolves to `./build.sh` then `./ThongpariFlyNeuronSim`.
 - A fresh Python 3.12 virtual environment successfully installed `flygym_bridge/requirements.txt` during V3 validation.
 - Observed dependency set for that fresh validation: Python 3.12.14, FlyGym 2.1.0, MuJoCo 3.9.0, NumPy 2.5.3, SciPy 1.18.1.
@@ -136,10 +136,10 @@ Core implementation/tests include:
 - `SensoryModel.swift` (new)
 - `MotorReadout.swift` (new)
 - `README.md`
-- `LAUNCHERS.md`
-- `VIRTUAL_FLY_LAB_V3_PLAN.md`
-- `VIRTUAL_FLY_LAB_ROADMAP.md`
-- `V3_COMPLETION_REPORT.md` (new)
+- `docs/guides/LAUNCHERS.md`
+- `docs/plans/VIRTUAL_FLY_LAB_V3_PLAN.md`
+- `docs/plans/VIRTUAL_FLY_LAB_ROADMAP.md`
+- `docs/reports/V3_COMPLETION_REPORT.md` (new)
 
 Pre-existing/uncommitted audit and validation files in the working tree were preserved rather than deleted or rewritten as part of V3 unless explicitly listed above.
 
@@ -149,4 +149,4 @@ The main V3 implementation is committed as `31bd106`. The independent verificati
 
 ## Next version boundary
 
-V3 stops here. Per `VIRTUAL_FLY_LAB_ROADMAP.md`, V4 is the time/session-lifecycle release: fixed simulation tick/lockstep experiment mode, pause barrier, session epoch and applied-command timing. V4 should not silently absorb V5 checkpointing or later package/import work.
+V3 stops here. Per `docs/plans/VIRTUAL_FLY_LAB_ROADMAP.md`, V4 is the time/session-lifecycle release: fixed simulation tick/lockstep experiment mode, pause barrier, session epoch and applied-command timing. The concrete V4 contract is `docs/plans/VIRTUAL_FLY_LAB_V4_PLAN.md`. V4 should not silently absorb V5 checkpointing or later package/import work.
