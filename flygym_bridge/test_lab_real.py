@@ -6,6 +6,7 @@ Run with the project venv, for example:
 This is intentionally separate from test_lab.py because constructing the real
 NeuroMechFly + retina is substantially more expensive than the stdlib/mock test.
 """
+import copy
 import math
 import os
 import sys
@@ -128,6 +129,95 @@ try:
               float(body.sim.mj_model.geom_rgba[gid, 3]) > 0.9 and
               all(abs(a - b) < 1e-9 for a, b in zip(actual_pos, obj.position_mm)),
               f"rgba={body.sim.mj_model.geom_rgba[gid].tolist()} pos={actual_pos}")
+
+    # V5.1 real-backend proof: the render snapshot is read from the same live
+    # MuJoCo owner state, and ray picking is semantic/read-only even though it
+    # calls mj_forward before mj_ray to refresh derived transforms.
+    v5_qpos_before = body.sim.mj_data.qpos.copy()
+    v5_qvel_before = body.sim.mj_data.qvel.copy()
+    v5_mocap_pos_before = body.sim.mj_data.mocap_pos.copy()
+    v5_mocap_quat_before = body.sim.mj_data.mocap_quat.copy()
+    v5_time_before = float(body.sim.mj_data.time)
+    v5_revision_before = int(world.revision)
+    v5_structure_revision_before = int(world.structure_revision)
+    v5_state_before = copy.deepcopy(world.state())
+    v5_events_before = copy.deepcopy(list(world.events))
+    render_state = body.world_render_state()
+    thorax_bid = world.force_body_ids["thorax"]
+    live_thorax_pos = np.asarray(body.sim.mj_data.xpos[thorax_bid], dtype=float)
+    live_thorax_wxyz = np.asarray(body.sim.mj_data.xquat[thorax_bid], dtype=float)
+    live_thorax_xyzw = live_thorax_wxyz[[1, 2, 3, 0]]
+    render_fly = render_state["fly"]
+    render_objects = {obj["id"]: obj for obj in render_state["objects"]}
+    runtime_box = world.objects["runtime_box"]
+    _, runtime_box_gid, runtime_box_mocap = world._slot_ids[runtime_box.slot]
+    live_box_pos = np.asarray(body.sim.mj_data.mocap_pos[runtime_box_mocap], dtype=float)
+    live_box_wxyz = np.asarray(body.sim.mj_data.mocap_quat[runtime_box_mocap], dtype=float)
+    live_box_xyzw = live_box_wxyz[[1, 2, 3, 0]]
+    live_box_size = np.asarray(body.sim.mj_model.geom_size[runtime_box_gid, :3], dtype=float) * 2.0
+    rendered_box = render_objects.get("runtime_box", {})
+    check("V5 real snapshot uses live thorax full pose",
+          render_state["world_revision"] == world.revision and
+          np.allclose(render_fly["position_mm"], live_thorax_pos, atol=1e-12) and
+          np.allclose(render_fly["orientation_quat_xyzw"], live_thorax_xyzw, atol=1e-12),
+          f"snapshot={render_fly} live_pos={live_thorax_pos.tolist()} "
+          f"live_quat={live_thorax_xyzw.tolist()}")
+    check("V5 real snapshot object pose/size comes from live mocap/model",
+          rendered_box.get("revision") == runtime_box.revision and
+          np.allclose(rendered_box.get("position_mm", []), live_box_pos, atol=1e-12) and
+          np.allclose(rendered_box.get("orientation_quat_xyzw", []), live_box_xyzw, atol=1e-12) and
+          np.allclose(rendered_box.get("size_mm", []), live_box_size, atol=1e-12),
+          f"snapshot={rendered_box} live_pos={live_box_pos.tolist()} "
+          f"live_size={live_box_size.tolist()}")
+
+    pick_qpos_before = body.sim.mj_data.qpos.copy()
+    pick_qvel_before = body.sim.mj_data.qvel.copy()
+    pick_mocap_pos_before = body.sim.mj_data.mocap_pos.copy()
+    pick_mocap_quat_before = body.sim.mj_data.mocap_quat.copy()
+    pick_time_before = float(body.sim.mj_data.time)
+    pick_revision_before = int(world.revision)
+    pick_state_before = copy.deepcopy(world.state())
+    pick_events_before = copy.deepcopy(list(world.events))
+    ray_origin = live_box_pos + np.array([0.0, 0.0, 40.0])
+    real_pick_hit = body.ray_pick(ray_origin.tolist(), [0.0, 0.0, -1.0])
+    real_pick_miss = body.ray_pick(ray_origin.tolist(), [0.0, 0.0, 1.0])
+    render_state_after_pick = body.world_render_state()
+    pick_state_after = world.state()
+    check("V5 real semantic ray hit/miss uses authoritative MuJoCo geometry",
+          real_pick_hit.get("hit") is True and
+          real_pick_hit.get("target_id") == "runtime_box" and
+          real_pick_hit.get("target_kind") == "lab_object" and
+          real_pick_hit.get("geom_id") == runtime_box_gid and
+          math.isfinite(real_pick_hit.get("distance_mm", math.nan)) and
+          len(real_pick_hit.get("point_mm", [])) == 3 and
+          len(real_pick_hit.get("normal_world", [])) == 3 and
+          real_pick_miss == {"hit": False},
+          f"hit={real_pick_hit} miss={real_pick_miss}")
+    check("V5 real ray hit/miss does not mutate owner physics/world state",
+          np.array_equal(body.sim.mj_data.qpos, pick_qpos_before) and
+          np.array_equal(body.sim.mj_data.qvel, pick_qvel_before) and
+          np.array_equal(body.sim.mj_data.mocap_pos, pick_mocap_pos_before) and
+          np.array_equal(body.sim.mj_data.mocap_quat, pick_mocap_quat_before) and
+          float(body.sim.mj_data.time) == pick_time_before and
+          int(world.revision) == pick_revision_before and
+          pick_state_after == pick_state_before and
+          list(world.events) == pick_events_before,
+          f"revision={pick_revision_before}->{world.revision} time={pick_time_before}->{body.sim.mj_data.time}")
+    check("V5 snapshot/pick same-tick refresh is stable and trajectory/world read-only",
+          render_state_after_pick == render_state and
+          np.array_equal(body.sim.mj_data.qpos, v5_qpos_before) and
+          np.array_equal(body.sim.mj_data.qvel, v5_qvel_before) and
+          np.array_equal(body.sim.mj_data.mocap_pos, v5_mocap_pos_before) and
+          np.array_equal(body.sim.mj_data.mocap_quat, v5_mocap_quat_before) and
+          float(body.sim.mj_data.time) == v5_time_before and
+          int(world.revision) == v5_revision_before and
+          int(world.structure_revision) == v5_structure_revision_before and
+          world.state() == v5_state_before and
+          list(world.events) == v5_events_before,
+          f"time={v5_time_before}->{body.sim.mj_data.time} "
+          f"revision={v5_revision_before}->{world.revision} "
+          f"structure={v5_structure_revision_before}->{world.structure_revision}")
+
     # Place food relative to the *actual* current thorax pose rather than the
     # nominal spawn origin. This exercises the complete RealFlyBody -> LabWorld
     # odor observation path even if warmup has shifted/rotated the fly slightly.

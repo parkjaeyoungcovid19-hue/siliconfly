@@ -16,6 +16,10 @@ SESSION_CONTROL_TYPE = "session_control"
 SESSION_STATE_TYPE = "session_state"
 EXPERIMENT_STEP_TYPE = "experiment_step"
 EXPERIMENT_STEP_RESULT_TYPE = "experiment_step_result"
+WORLD_RENDER_REQUEST_TYPE = "world_render_request"
+WORLD_RENDER_SNAPSHOT_TYPE = "world_render_snapshot"
+RAY_PICK_REQUEST_TYPE = "ray_pick_request"
+RAY_PICK_RESULT_TYPE = "ray_pick_result"
 
 V4_PROTOCOL_VERSION = 4
 V4_EXPERIMENT_QUANTUM_TICKS = 20
@@ -24,6 +28,10 @@ V4_CAPABILITIES = {
     "pause_barrier",
     "epoch",
     "applied_tick",
+}
+V5_VIEW_CAPABILITIES = {
+    "world_render_snapshot",
+    "ray_pick",
 }
 
 MAX_DISCRETE_LAB_COMMANDS = 128
@@ -56,6 +64,92 @@ def _session_id(value):
     if len(text) > 128:
         raise ValueError("session_id too long")
     return text
+
+
+def _strict_required_int(d, key, lo=0, hi=9_223_372_036_854_775_807):
+    if key not in d:
+        raise ValueError(f"missing required field: {key}")
+    value = d[key]
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{key} must be an integer")
+    if value < lo or value > hi:
+        raise ValueError(f"{key} out of range")
+    return int(value)
+
+
+def _strict_render_session_id(d):
+    """Require the field while allowing the explicit sessionless V4 value."""
+    if "session_id" not in d:
+        raise ValueError("missing required field: session_id")
+    value = d["session_id"]
+    if not isinstance(value, str):
+        raise ValueError("session_id must be a string")
+    text = value.strip()
+    if len(text) > 128:
+        raise ValueError("session_id too long")
+    return text
+
+
+def _strict_number(value, name):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{name} must be numeric")
+    out = float(value)
+    if not math.isfinite(out):
+        raise ValueError(f"{name} must be finite")
+    return out
+
+
+def _strict_vec(value, length, name):
+    if not isinstance(value, (list, tuple)) or len(value) != length:
+        raise ValueError(f"{name} must have length {length}")
+    return [_strict_number(v, f"{name}[{i}]") for i, v in enumerate(value)]
+
+
+def _strict_unit_quat_xyzw(value, name):
+    quat = _strict_vec(value, 4, name)
+    norm = math.sqrt(sum(v * v for v in quat))
+    if norm < 1e-12 or abs(norm - 1.0) > 1e-3:
+        raise ValueError(f"{name} must be normalized")
+    return quat
+
+
+def _strict_render_pose(value, name):
+    if not isinstance(value, dict):
+        raise ValueError(f"{name} must be an object")
+    object_id = value.get("id")
+    if not isinstance(object_id, str) or not object_id.strip() or len(object_id) > 64:
+        raise ValueError(f"{name}.id is invalid")
+    return {
+        "id": object_id.strip(),
+        "position_mm": _strict_vec(value.get("position_mm"), 3, f"{name}.position_mm"),
+        "orientation_quat_xyzw": _strict_unit_quat_xyzw(
+            value.get("orientation_quat_xyzw"), f"{name}.orientation_quat_xyzw"),
+    }
+
+
+def _strict_render_object(value, index):
+    name = f"objects[{index}]"
+    pose = _strict_render_pose(value, name)
+    shape = value.get("shape")
+    if not isinstance(shape, str) or not shape.strip() or len(shape) > 32:
+        raise ValueError(f"{name}.shape is invalid")
+    size = _strict_vec(value.get("size_mm"), 3, f"{name}.size_mm")
+    if any(v <= 0.0 for v in size):
+        raise ValueError(f"{name}.size_mm must be positive")
+    revision = _strict_required_int(value, "revision", 0)
+    out = {
+        **pose,
+        "shape": shape.strip().lower(),
+        "size_mm": size,
+        "revision": revision,
+        "collidable": bool(value.get("collidable", True)),
+    }
+    classification = value.get("classification")
+    if classification is not None:
+        if not isinstance(classification, str) or len(classification) > 64:
+            raise ValueError(f"{name}.classification is invalid")
+        out["classification"] = classification
+    return out
 
 @dataclass
 class BrainPacket:
@@ -222,7 +316,8 @@ class HelloPacket:
     """
     protocol_version: int = V4_PROTOCOL_VERSION
     role: str = "python"
-    capabilities: set[str] = field(default_factory=lambda: set(V4_CAPABILITIES))
+    capabilities: set[str] = field(
+        default_factory=lambda: set(V4_CAPABILITIES | V5_VIEW_CAPABILITIES))
     physics_timestep_s: float | None = None
     supported_quantum_ticks: list[int] = field(
         default_factory=lambda: [V4_EXPERIMENT_QUANTUM_TICKS])
@@ -448,6 +543,288 @@ class ExperimentStepResultPacket:
                "body": body}
         if self.error is not None:
             out["error"] = self.error
+        return out
+
+
+@dataclass
+class WorldRenderRequestPacket:
+    protocol_version: int = V4_PROTOCOL_VERSION
+    session_id: str = ""
+    epoch: int = 0
+    seq: int = 0
+
+    @staticmethod
+    def from_dict(d: dict) -> "WorldRenderRequestPacket":
+        if not isinstance(d, dict):
+            raise ValueError("world render request must be an object")
+        return WorldRenderRequestPacket(
+            protocol_version=_strict_required_int(d, "protocol_version", 0, 1_000_000),
+            session_id=_strict_render_session_id(d),
+            epoch=_strict_required_int(d, "epoch", 0),
+            seq=_strict_required_int(d, "seq", 0),
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "type": WORLD_RENDER_REQUEST_TYPE,
+            "protocol_version": int(self.protocol_version),
+            "session_id": self.session_id,
+            "epoch": int(self.epoch),
+            "seq": int(self.seq),
+        }
+
+
+@dataclass
+class WorldRenderSnapshotPacket:
+    protocol_version: int = V4_PROTOCOL_VERSION
+    session_id: str = ""
+    epoch: int = 0
+    request_seq: int = 0
+    sim_tick: int = 0
+    ok: bool = True
+    error: str | None = None
+    snapshot_seq: int | None = None
+    world_revision: int | None = None
+    fly: dict | None = None
+    objects: list[dict] | None = None
+
+    @staticmethod
+    def from_dict(d: dict) -> "WorldRenderSnapshotPacket":
+        if not isinstance(d, dict):
+            raise ValueError("world render snapshot must be an object")
+        protocol_version = _strict_required_int(d, "protocol_version", 0, 1_000_000)
+        session_id = _strict_render_session_id(d)
+        epoch = _strict_required_int(d, "epoch", 0)
+        request_seq = _strict_required_int(d, "request_seq", 0)
+        sim_tick = _strict_required_int(d, "sim_tick", 0)
+        if "ok" not in d or not isinstance(d["ok"], bool):
+            raise ValueError("ok must be a boolean")
+        ok = d["ok"]
+        error = None if d.get("error") is None else str(d.get("error"))[:512]
+        if not ok:
+            if not error:
+                raise ValueError("failed world render snapshot requires error")
+            return WorldRenderSnapshotPacket(
+                protocol_version=protocol_version, session_id=session_id, epoch=epoch,
+                request_seq=request_seq, sim_tick=sim_tick, ok=False, error=error)
+
+        snapshot_seq = _strict_required_int(d, "snapshot_seq", 1)
+        world_revision = _strict_required_int(d, "world_revision", 0)
+        fly = _strict_render_pose(d.get("fly"), "fly")
+        raw_objects = d.get("objects")
+        if not isinstance(raw_objects, list):
+            raise ValueError("objects must be an array")
+        objects = [_strict_render_object(obj, i) for i, obj in enumerate(raw_objects)]
+        if len({obj["id"] for obj in objects}) != len(objects):
+            raise ValueError("objects contain duplicate ids")
+        return WorldRenderSnapshotPacket(
+            protocol_version=protocol_version, session_id=session_id, epoch=epoch,
+            request_seq=request_seq, sim_tick=sim_tick, ok=True,
+            snapshot_seq=snapshot_seq, world_revision=world_revision,
+            fly=fly, objects=objects)
+
+    def to_dict(self) -> dict:
+        out = {
+            "type": WORLD_RENDER_SNAPSHOT_TYPE,
+            "protocol_version": int(self.protocol_version),
+            "session_id": self.session_id,
+            "epoch": int(self.epoch),
+            "request_seq": int(self.request_seq),
+            "sim_tick": int(self.sim_tick),
+            "ok": bool(self.ok),
+        }
+        if not self.ok:
+            if not self.error:
+                raise ValueError("failed world render snapshot requires error")
+            out["error"] = str(self.error)[:512]
+            WorldRenderSnapshotPacket.from_dict(out)
+            return out
+        out.update(
+            snapshot_seq=self.snapshot_seq,
+            world_revision=self.world_revision,
+            fly=self.fly,
+            objects=self.objects,
+        )
+        # Validate every required success field before it reaches json.dumps.
+        validated = WorldRenderSnapshotPacket.from_dict(out)
+        out["snapshot_seq"] = validated.snapshot_seq
+        out["world_revision"] = validated.world_revision
+        out["fly"] = validated.fly
+        out["objects"] = validated.objects
+        return out
+
+
+@dataclass
+class RayPickRequestPacket:
+    protocol_version: int = V4_PROTOCOL_VERSION
+    session_id: str = ""
+    epoch: int = 0
+    seq: int = 0
+    source_snapshot_seq: int = 0
+    source_world_revision: int = 0
+    source_sim_tick: int = 0
+    ray_origin_mm: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
+    ray_direction: list[float] = field(default_factory=lambda: [1.0, 0.0, 0.0])
+
+    @staticmethod
+    def from_dict(d: dict) -> "RayPickRequestPacket":
+        if not isinstance(d, dict):
+            raise ValueError("ray pick request must be an object")
+        origin = _strict_vec(d.get("ray_origin_mm"), 3, "ray_origin_mm")
+        direction = _strict_vec(d.get("ray_direction"), 3, "ray_direction")
+        norm = math.sqrt(sum(v * v for v in direction))
+        if norm < 1e-12:
+            raise ValueError("ray_direction must be non-zero")
+        direction = [v / norm for v in direction]
+        return RayPickRequestPacket(
+            protocol_version=_strict_required_int(d, "protocol_version", 0, 1_000_000),
+            session_id=_strict_render_session_id(d),
+            epoch=_strict_required_int(d, "epoch", 0),
+            seq=_strict_required_int(d, "seq", 0),
+            source_snapshot_seq=_strict_required_int(d, "source_snapshot_seq", 1),
+            source_world_revision=_strict_required_int(d, "source_world_revision", 0),
+            source_sim_tick=_strict_required_int(d, "source_sim_tick", 0),
+            ray_origin_mm=origin, ray_direction=direction,
+        )
+
+    def to_dict(self) -> dict:
+        raw = {
+            "type": RAY_PICK_REQUEST_TYPE,
+            "protocol_version": int(self.protocol_version),
+            "session_id": self.session_id,
+            "epoch": int(self.epoch),
+            "seq": int(self.seq),
+            "source_snapshot_seq": int(self.source_snapshot_seq),
+            "source_world_revision": int(self.source_world_revision),
+            "source_sim_tick": int(self.source_sim_tick),
+            "ray_origin_mm": self.ray_origin_mm,
+            "ray_direction": self.ray_direction,
+        }
+        validated = RayPickRequestPacket.from_dict(raw)
+        raw["ray_origin_mm"] = validated.ray_origin_mm
+        raw["ray_direction"] = validated.ray_direction
+        return raw
+
+
+@dataclass
+class RayPickResultPacket:
+    protocol_version: int = V4_PROTOCOL_VERSION
+    session_id: str = ""
+    epoch: int = 0
+    seq: int = 0
+    sim_tick: int = 0
+    world_revision: int = 0
+    source_snapshot_seq: int = 0
+    source_world_revision: int = 0
+    source_sim_tick: int = 0
+    ok: bool = True
+    hit: bool = False
+    error: str | None = None
+    target_id: str | None = None
+    target_kind: str | None = None
+    distance_mm: float | None = None
+    point_mm: list[float] | None = None
+    normal_world: list[float] | None = None
+    geom_id: int | None = None
+
+    @staticmethod
+    def from_dict(d: dict) -> "RayPickResultPacket":
+        if not isinstance(d, dict):
+            raise ValueError("ray pick result must be an object")
+        protocol_version = _strict_required_int(d, "protocol_version", 0, 1_000_000)
+        session_id = _strict_render_session_id(d)
+        epoch = _strict_required_int(d, "epoch", 0)
+        seq = _strict_required_int(d, "seq", 0)
+        sim_tick = _strict_required_int(d, "sim_tick", 0)
+        world_revision = _strict_required_int(d, "world_revision", 0)
+        source_snapshot_seq = _strict_required_int(d, "source_snapshot_seq", 1)
+        source_world_revision = _strict_required_int(d, "source_world_revision", 0)
+        source_sim_tick = _strict_required_int(d, "source_sim_tick", 0)
+        if "ok" not in d or not isinstance(d["ok"], bool):
+            raise ValueError("ok must be a boolean")
+        if "hit" not in d or not isinstance(d["hit"], bool):
+            raise ValueError("hit must be a boolean")
+        ok = d["ok"]
+        hit = d["hit"]
+        error = None if d.get("error") is None else str(d.get("error"))[:512]
+        if not ok:
+            if not error or hit:
+                raise ValueError("failed ray pick requires error and hit=false")
+            return RayPickResultPacket(
+                protocol_version=protocol_version, session_id=session_id, epoch=epoch,
+                seq=seq, sim_tick=sim_tick, world_revision=world_revision,
+                source_snapshot_seq=source_snapshot_seq,
+                source_world_revision=source_world_revision,
+                source_sim_tick=source_sim_tick,
+                ok=False, hit=False, error=error)
+        if not hit:
+            return RayPickResultPacket(
+                protocol_version=protocol_version, session_id=session_id, epoch=epoch,
+                seq=seq, sim_tick=sim_tick, world_revision=world_revision,
+                source_snapshot_seq=source_snapshot_seq,
+                source_world_revision=source_world_revision,
+                source_sim_tick=source_sim_tick,
+                ok=True, hit=False)
+
+        target_id = d.get("target_id")
+        target_kind = d.get("target_kind")
+        if not isinstance(target_id, str) or not target_id.strip() or len(target_id) > 128:
+            raise ValueError("target_id is invalid")
+        if not isinstance(target_kind, str) or not target_kind.strip() or len(target_kind) > 32:
+            raise ValueError("target_kind is invalid")
+        distance = _strict_number(d.get("distance_mm"), "distance_mm")
+        if distance < 0.0:
+            raise ValueError("distance_mm must be non-negative")
+        point = _strict_vec(d.get("point_mm"), 3, "point_mm")
+        normal = _strict_vec(d.get("normal_world"), 3, "normal_world")
+        normal_norm = math.sqrt(sum(v * v for v in normal))
+        if normal_norm < 1e-12:
+            raise ValueError("normal_world must be non-zero")
+        normal = [v / normal_norm for v in normal]
+        geom_id = _strict_required_int(d, "geom_id", 0, 2_147_483_647)
+        return RayPickResultPacket(
+            protocol_version=protocol_version, session_id=session_id, epoch=epoch,
+            seq=seq, sim_tick=sim_tick, world_revision=world_revision,
+            source_snapshot_seq=source_snapshot_seq,
+            source_world_revision=source_world_revision,
+            source_sim_tick=source_sim_tick,
+            ok=True, hit=True, target_id=target_id.strip(), target_kind=target_kind.strip(),
+            distance_mm=distance, point_mm=point, normal_world=normal, geom_id=geom_id)
+
+    def to_dict(self) -> dict:
+        out = {
+            "type": RAY_PICK_RESULT_TYPE,
+            "protocol_version": int(self.protocol_version),
+            "session_id": self.session_id,
+            "epoch": int(self.epoch),
+            "seq": int(self.seq),
+            "sim_tick": int(self.sim_tick),
+            "world_revision": int(self.world_revision),
+            "source_snapshot_seq": int(self.source_snapshot_seq),
+            "source_world_revision": int(self.source_world_revision),
+            "source_sim_tick": int(self.source_sim_tick),
+            "ok": bool(self.ok),
+            "hit": bool(self.hit),
+        }
+        if self.error is not None:
+            out["error"] = str(self.error)[:512]
+        if self.hit:
+            out.update(
+                target_id=self.target_id,
+                target_kind=self.target_kind,
+                distance_mm=self.distance_mm,
+                point_mm=self.point_mm,
+                normal_world=self.normal_world,
+                geom_id=self.geom_id,
+            )
+        validated = RayPickResultPacket.from_dict(out)
+        if validated.hit:
+            out["target_id"] = validated.target_id
+            out["target_kind"] = validated.target_kind
+            out["distance_mm"] = validated.distance_mm
+            out["point_mm"] = validated.point_mm
+            out["normal_world"] = validated.normal_world
+            out["geom_id"] = validated.geom_id
         return out
 
 
@@ -756,6 +1133,14 @@ def decode_line(line: bytes):
             return ExperimentStepPacket.from_dict(d)
         if kind == EXPERIMENT_STEP_RESULT_TYPE:
             return ExperimentStepResultPacket.from_dict(d)
+        if kind == WORLD_RENDER_REQUEST_TYPE:
+            return WorldRenderRequestPacket.from_dict(d)
+        if kind == WORLD_RENDER_SNAPSHOT_TYPE:
+            return WorldRenderSnapshotPacket.from_dict(d)
+        if kind == RAY_PICK_REQUEST_TYPE:
+            return RayPickRequestPacket.from_dict(d)
+        if kind == RAY_PICK_RESULT_TYPE:
+            return RayPickResultPacket.from_dict(d)
     except Exception:
         return None
     return None

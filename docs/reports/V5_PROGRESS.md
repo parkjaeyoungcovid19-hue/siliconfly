@@ -1,8 +1,9 @@
 # Virtual Fly Lab V5 — implementation progress
 
 Prepared: **2026-09-13**
-Baseline HEAD: `e900b272e1df4131edba51476f0d213a8d166ca1` (`Complete Virtual Fly Lab V4 deterministic sessions`)
-Status: **READY TO IMPLEMENT — V5.1 is next; no V5 runtime feature is claimed complete**
+V4 baseline: `e900b272e1df4131edba51476f0d213a8d166ca1` (`Complete Virtual Fly Lab V4 deterministic sessions`)
+V5 preparation commit: `3faf942` (`Prepare Virtual Fly Lab V5 implementation`)
+Status: **V5.1 AUTOMATED_VERIFIED — atomic snapshot/picking + integrated SceneKit prototype are implemented; fresh GUI/focus/latency acceptance is still pending**
 
 ## Start gate
 
@@ -23,7 +24,7 @@ These checks confirm the committed V4 scheduling/session baseline before V5 work
 
 | 단계 ID | 요구 | 상태 | 변경 파일 | 실행 검사/로그 | 실패/다음 조치 |
 |---|---|---|---|---|---|
-| V5.1 | 현재 API 조사 및 viewport prototype | planned / ready | 미정 | API preflight below; runtime prototype not yet executed | first implementation step |
+| V5.1 | 현재 API 조사 및 viewport prototype | automated_verified | `LabProtocol.swift`, `FlyGymBridge.swift`, `WorldViewer.swift`, `LabWindow.swift`, `build.sh`, `flygym_bridge/{protocol,bridge,fly_body,lab_world}.py`, `flygym_bridge/test_v5.py` | focused V5 + Swift bridge/lab/V4 + Python V4/lab/bridge + real lab/vision PASS; real MuJoCo snapshot/pick probe PASS | fresh integrated GUI, keyboard-focus suitability, viewport FPS + pick ACK latency remain before `complete` |
 | V5.2 | 공통 화면 상태 소유권 | planned | 미정 | 미실행 | V5.1 renderer decision required |
 | V5.3 | 관찰 camera | planned | 미정 | 미실행 | camera must stay read-only to simulation |
 | V5.4 | 실제 사용자 참여체 | planned | 미정 | 미실행 | backend geometry + eye visibility required |
@@ -32,6 +33,64 @@ These checks confirm the committed V4 scheduling/session baseline before V5 work
 | V5.7 | 기존 activity card 연결 | planned | 미정 | 미실행 | reuse existing telemetry only; no new state model |
 
 No V6 terrain/environment editor, V7 neuron inspector, V8 module host, V9 checkpoint, or V11 desire/emotion model is pulled forward into this version.
+
+## V5.1 implementation evidence — current working tree
+
+The first runtime slice now exists. It deliberately stops before player movement/input:
+
+- Python emits a strict, simulation-owner-produced `world_render_snapshot` with session/epoch/tick, monotonic snapshot/world revisions, full live thorax pose and authoritative lab-object 3D poses/sizes.
+- Snapshot and pick queries use separate optional `world_render_snapshot` / `ray_pick` capabilities; a V4-only peer keeps deterministic V4 behavior but does not silently enable the V5 viewport.
+- Sessionless observation before a V4 experiment is explicit as `session_id="", epoch=0`; once a session exists, wrong-session/old-epoch queries fail closed.
+- `ray_pick_request` is read-only. The real backend uses `mujoco.mj_ray`; the result carries semantic target ID/kind, distance, hit point, world normal and geom ID. Hit and miss queries do not advance or mutate MuJoCo state.
+- `WorldViewer.swift` is an AppKit-native SceneKit mirror that consumes only the atomic snapshot. It uses the right-handed basis `MuJoCo (x,y,z) -> SceneKit (x,z,-y)`, transforms orientation by the same basis and inverse-transforms click rays before sending them to MuJoCo.
+- `LabWindow` hosts the new 3D view above the existing 2D arena. With V5 capability the 3D view and minimap both use the same atomic snapshot; a V4-only backend leaves the 3D view visibly unavailable instead of mixing `body` and `lab_state` into a fake snapshot.
+
+Fresh verification after the implementation slice:
+
+| Check | Result |
+|---|---|
+| `./build.sh` | PASS |
+| `./ThongpariFlyNeuronSim --bridgetest` | PASS — V5 strict schema/capability/session/stale filtering + coordinate/quaternion/ray basis fixtures |
+| `./ThongpariFlyNeuronSim --labtest` | PASS |
+| `./ThongpariFlyNeuronSim --v4test` | PASS |
+| `./ThongpariFlyNeuronSim --v4timingtest` | PASS |
+| `./flygym-venv/bin/python flygym_bridge/test_v5.py` | PASS — `ALL V5.1 TESTS PASS` |
+| `./flygym-venv/bin/python flygym_bridge/test_v4.py` | PASS |
+| `./flygym-venv/bin/python flygym_bridge/test_lab.py` | PASS |
+| `./flygym-venv/bin/python flygym_bridge/test_bridge.py` | PASS |
+| `./flygym-venv/bin/python flygym_bridge/test_lab_real.py` | PASS — `ALL REAL LAB TESTS PASS` |
+| `./flygym-venv/bin/python flygym_bridge/test_vision_real.py` | PASS — real LabWorld geometry changes real eye pixels and generic optic expansion |
+| focused real `RealFlyBody` snapshot + `mj_ray` probe | PASS — `v5_probe` snapshot pose/size matched live MuJoCo and ray hit semantic ID `v5_probe` at 17.0 mm |
+| `git diff --check` | PASS |
+
+This is **automated verification, not V5.1 completion**. The remaining V5.1 gate is a fresh app + real backend run proving the integrated `WorldViewer` itself renders correctly, can take keyboard focus for the later V5.5 input layer, and has measured viewport FPS/snapshot rate/pick ACK latency without degrading the body/eye loop beyond the accepted budget.
+
+## Astra independent review follow-up — 2026-09-14
+
+The independent review in `notes/validation/v5-1-independent-2026-09-13/REVIEW.md` found three P2 defects. The review file is preserved as the original audit record; the current working tree fixes all three and adds regressions for the exact failure modes:
+
+1. **Moving-object picks no longer fail just because pose revision advanced.** `LabWorld` now tracks an internal structural revision separately from the existing full render/world revision. Pose-only movement, including `approach`, may advance `world_revision` without invalidating a displayed snapshot as a ray source. Spawn/delete/resize/reset still invalidate structurally stale ray sources. The new `test_v5.py` transport regression reproduces the former `serve_once` ordering and verifies a just-delivered moving-object snapshot remains pickable.
+2. **Reconnect cannot reuse the previous client's V5 query cache.** Each transport connection clears only V5 pending view queries, cached view results, snapshot provenance and queued V5 replies while preserving the logical V4 session/epoch/tick and V4 idempotence caches. A reconnect regression reuses request `seq=1` after moving an object and verifies the second client receives a newly generated snapshot with the live pose.
+3. **Snapshot and pick observe the same derived MuJoCo pose at one owner boundary.** `RealFlyBody.world_render_state()` now runs `mj_forward` before copying `xpos/xquat`, matching the existing ray path. The full real-backend test verifies snapshot → ray hit/miss → snapshot is identical at unchanged simulation time while qpos/qvel/mocap/time/world state/events stay unchanged.
+
+The review also identified a Swift presentation consequence of item 1: a matching backend error or successful pick could be hidden by requiring the currently displayed `world_revision` to equal the pick result revision. `worldViewerPickDisposition` now owns that decision using latest request sequence plus exact echoed source snapshot metadata. Matching error ACKs are always surfaced; pose-advanced successful hit/miss results remain usable after backend structural validation; older-request results are ignored.
+
+Fresh post-review checks on the hardened tree:
+
+| Check | Result |
+|---|---|
+| `./build.sh` | PASS |
+| `./ThongpariFlyNeuronSim --bridgetest` | PASS — includes pose-advanced pick ACK, visible error ACK and stale-request rejection |
+| `./ThongpariFlyNeuronSim --labtest` | PASS |
+| `./ThongpariFlyNeuronSim --v4test` | PASS |
+| `./flygym-venv/bin/python flygym_bridge/test_v5.py` | PASS — includes moving `serve_once` pick + reconnect cache regression |
+| `./flygym-venv/bin/python flygym_bridge/test_v4.py` | PASS |
+| `./flygym-venv/bin/python flygym_bridge/test_lab.py` | PASS |
+| `./flygym-venv/bin/python flygym_bridge/test_bridge.py` | PASS |
+| `./flygym-venv/bin/python flygym_bridge/test_lab_real.py` | PASS — same-tick snapshot/pick stability on full `RealFlyBody` |
+| Python `py_compile` + `git diff --check` | PASS |
+
+No V5.2+ functionality was pulled into this repair pass. The remaining V5.1 gate is still the integrated GUI/focus/FPS/snapshot-rate/pick-ACK-latency acceptance described above.
 
 ## V5.1 API preflight — verified installed surface
 
@@ -45,9 +104,11 @@ Verified public Python APIs/symbols:
 - `mujoco.mjv_select(...)` exists for view-relative selection when a MuJoCo scene/camera is available.
 - The existing Swift app already links **SceneKit** and uses `SCNScene`/`SCNRenderer`, so an AppKit-native `SCNView` mirror does not add a new framework dependency.
 
-Current project facts that constrain the prototype:
+Fresh 320×240 MuJoCo offscreen probe on the V5 development machine, using the real compiled FlyGym `MjModel`/`MjData`: the first render cost **111.71 ms** (graphics warm-up), followed by **18.13, 6.16, 3.74, 2.99, 3.07, 3.06, 3.46 ms**. The steady samples are therefore only a few milliseconds, so offscreen MuJoCo rendering remains a credible comparison candidate; this is not yet an end-to-end frame-transport or integrated-viewer FPS result.
 
-- `LabWindow.swift` currently renders the world only through the custom 2D `LabArenaPlacementView`.
+Baseline project facts that constrained the prototype:
+
+- Before this slice, `LabWindow.swift` rendered the world only through the custom 2D `LabArenaPlacementView`; the V5.1 working tree now adds `WorldViewer.swift` while retaining the arena as a helper/minimap.
 - Real MuJoCo rendering is a separate passive viewer window owned by the Python process.
 - lab object state already exposes ID, shape, `position_mm`, `size_mm`, and `yaw_deg`.
 - body packets already expose the fly's X/Y position and heading, but not a complete 3D pose/quaternion suitable for the V5 `WorldRenderSnapshot` contract.
@@ -55,13 +116,13 @@ Current project facts that constrain the prototype:
 
 ## Prototype direction for V5.1
 
-The first V5.1 implementation should compare these paths with a minimal real scene, then record the measured result before V5.2:
+The V5.1 implementation compares these paths with a minimal real scene, then records the measured result before V5.2:
 
-1. **AppKit-native SceneKit viewport fed by immutable backend snapshots — preferred first candidate.** `WorldViewer.swift` owns only presentation camera, selection preview and rendering. It mirrors backend object/fly/player geometry but never mutates MuJoCo directly. Pick rays are sent to the backend, where MuJoCo `mj_ray` is authoritative. This gives normal AppKit keyboard/focus behavior and keeps the integrated viewer inside the Lab window.
+1. **AppKit-native SceneKit viewport fed by immutable backend snapshots — current implementation candidate.** `WorldViewer.swift` owns only presentation camera, selection preview and rendering. It mirrors backend object/fly geometry but never mutates MuJoCo directly. Pick rays are sent to the backend, where MuJoCo `mj_ray` is authoritative. Fresh GUI/focus/performance acceptance is still required before declaring this production-selected.
 2. **MuJoCo offscreen `Renderer` frames — comparison candidate.** Prove whether acceptable frame rate/latency is possible without starving the existing body/eye renderer. Do not send unbounded/base64 frame traffic through the current NDJSON command lane as the production design.
 3. **Existing passive Simulate viewer — control/baseline only.** Keep it for visual parity and debugging. Because the installed macOS API launches a separate Python-owned window, it is not the default integrated-viewer implementation unless the prototype discovers a supported host/embedding API that was not visible in the installed public surface.
 
-V5.1 is complete only after a real runtime prototype proves that one selected path can show the same backend geometry used for collision/eye visibility, accept keyboard focus, support authoritative picking, and meet a measured viewport budget. This preparation pass does **not** mark that gate complete.
+V5.1 is complete only after a real runtime prototype proves that one selected path can show the same backend geometry used for collision/eye visibility, accept keyboard focus, support authoritative picking, and meet a measured viewport budget. The automated/runtime-backend half of that gate is now green; the fresh integrated GUI/focus/latency half is still pending.
 
 ## Contract work to do before UI construction
 
@@ -101,14 +162,14 @@ The V5 participant begins as a small fly-scale probe/avatar, not a human-scale b
 
 ## First implementation slice
 
-When implementation starts, keep the first slice intentionally small:
+The current first slice is intentionally small:
 
-1. add focused V5 schema/validation fixtures for render snapshot, player pose/input and backend pick result, including missing field, NaN/invalid length and old-epoch negatives;
-2. expose one atomic backend snapshot from the existing simulation-owner path;
-3. build the smallest `WorldViewer.swift` prototype that renders ground + one existing lab object + fly pose from that snapshot and has a read-only camera;
-4. send one pick ray to backend `mj_ray` and verify hit + miss without world mutation;
-5. run the same real scene in the existing passive viewer/eye renderer and confirm IDs/poses agree before selecting the production viewport path;
-6. record frame cost, snapshot rate and input-to-pick ACK latency before V5.2.
+1. **DONE (runtime fields used by V5.1):** focused V5 schema/validation fixtures cover render snapshot/pose and backend pick result, including missing field, NaN/invalid length, invalid quaternion and old-epoch negatives. Player movement/input schema remains deliberately deferred to its owning later step rather than becoming dead V5.1 code.
+2. **DONE:** one atomic backend snapshot is produced from the simulation-owner path.
+3. **DONE / GUI acceptance pending:** the minimal `WorldViewer.swift` renders backend objects + fly from that snapshot with a read-only presentation camera.
+4. **DONE:** backend `mj_ray` hit + miss are verified without world mutation.
+5. **BACKEND/eye evidence DONE; integrated visual acceptance pending:** real LabWorld geometry is verified in MuJoCo and the real eye renderer; the new SceneKit view still needs a fresh GUI visual comparison.
+6. **PARTIAL:** offscreen render cost is measured; integrated viewport FPS, snapshot rate and click-to-pick ACK latency remain to record before V5.2.
 
 Do not create `PlayerController.swift`, `WorldInteraction.swift` and `player_body.py` as empty stubs before their owning step starts; the common playbook explicitly avoids bulk stub creation.
 
@@ -116,4 +177,4 @@ Do not create `PlayerController.swift`, `WorldInteraction.swift` and `player_bod
 
 The final V5 user path remains: enter participation mode → move a real participant body near the fly → place/move an object → verify the participant/object can appear through the actual eye path and contact is physical → inspect existing neural/activity telemetry → pause without advancing world/brain/player tick → return to observation mode, all from one integrated Lab viewer.
 
-The next code change is **V5.1**, not V6 work.
+The next work is **finish V5.1 GUI/focus/performance acceptance**, not V5.2 or V6 work.

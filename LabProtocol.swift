@@ -185,6 +185,321 @@ struct LabRemoteState: Decodable, FlyGymStampedPacket {
     var authoritativeSlotFree: [String: Int]? { slotFree ?? worldState?.slotFree }
 }
 
+// MARK: - V5.1 atomic world render / picking protocol
+
+private enum WorldRenderDecode {
+    static func finiteVector(_ value: [Double], count: Int, name: String) throws -> [Double] {
+        guard value.count == count, value.allSatisfy(\.isFinite) else {
+            throw DecodingError.dataCorrupted(.init(codingPath: [],
+                                                    debugDescription: "\(name) must contain \(count) finite values"))
+        }
+        return value
+    }
+
+    static func unitQuaternion(_ value: [Double], name: String) throws -> [Double] {
+        let q = try finiteVector(value, count: 4, name: name)
+        let norm = sqrt(q.reduce(0) { $0 + $1 * $1 })
+        guard norm >= 1e-12, abs(norm - 1) <= 1e-3 else {
+            throw DecodingError.dataCorrupted(.init(codingPath: [],
+                                                    debugDescription: "\(name) must be normalized"))
+        }
+        return q
+    }
+}
+
+/// One pose copied from the Python simulation owner. This is deliberately
+/// independent from the desktop-overlay Fly in `main.swift`.
+struct WorldRenderPose: Decodable {
+    var id: String
+    var positionMM: [Double]
+    var orientationQuatXYZW: [Double]
+    // Forward-compatible optional player metadata. V5.1 renders it if supplied
+    // but does not create, move, or otherwise control a player body.
+    var collisionRadiusMM: Double?
+    var mode: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case actorID = "actor_id"
+        case positionMM = "position_mm"
+        case orientationQuatXYZW = "orientation_quat_xyzw"
+        case collisionRadiusMM = "collision_radius_mm"
+        case mode
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let rawID = try c.decodeIfPresent(String.self, forKey: .id)
+            ?? c.decodeIfPresent(String.self, forKey: .actorID)
+        guard let rawID else {
+            throw DecodingError.keyNotFound(CodingKeys.id,
+                                            .init(codingPath: decoder.codingPath,
+                                                  debugDescription: "pose requires id or actor_id"))
+        }
+        let trimmedID = rawID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedID.isEmpty, trimmedID.count <= 128 else {
+            throw DecodingError.dataCorruptedError(forKey: .id, in: c,
+                                                   debugDescription: "pose id is invalid")
+        }
+        id = trimmedID
+        positionMM = try WorldRenderDecode.finiteVector(
+            c.decode([Double].self, forKey: .positionMM), count: 3, name: "position_mm")
+        orientationQuatXYZW = try WorldRenderDecode.unitQuaternion(
+            c.decode([Double].self, forKey: .orientationQuatXYZW), name: "orientation_quat_xyzw")
+        if let radius = try c.decodeIfPresent(Double.self, forKey: .collisionRadiusMM) {
+            guard radius.isFinite, radius >= 0 else {
+                throw DecodingError.dataCorruptedError(forKey: .collisionRadiusMM, in: c,
+                                                       debugDescription: "collision_radius_mm must be finite and non-negative")
+            }
+            collisionRadiusMM = radius
+        } else {
+            collisionRadiusMM = nil
+        }
+        mode = try c.decodeIfPresent(String.self, forKey: .mode)
+    }
+}
+
+struct WorldRenderObject: Decodable {
+    var id: String
+    var shape: String
+    var positionMM: [Double]
+    var orientationQuatXYZW: [Double]
+    var sizeMM: [Double]
+    var revision: Int
+    var collidable: Bool
+    var classification: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, shape, revision, collidable, classification
+        case positionMM = "position_mm"
+        case orientationQuatXYZW = "orientation_quat_xyzw"
+        case sizeMM = "size_mm"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let rawID = try c.decode(String.self, forKey: .id).trimmingCharacters(in: .whitespacesAndNewlines)
+        let rawShape = try c.decode(String.self, forKey: .shape).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !rawID.isEmpty, rawID.count <= 128, !rawShape.isEmpty, rawShape.count <= 32 else {
+            throw DecodingError.dataCorruptedError(forKey: .id, in: c,
+                                                   debugDescription: "render object id/shape is invalid")
+        }
+        id = rawID
+        shape = rawShape.lowercased()
+        positionMM = try WorldRenderDecode.finiteVector(
+            c.decode([Double].self, forKey: .positionMM), count: 3, name: "position_mm")
+        orientationQuatXYZW = try WorldRenderDecode.unitQuaternion(
+            c.decode([Double].self, forKey: .orientationQuatXYZW), name: "orientation_quat_xyzw")
+        sizeMM = try WorldRenderDecode.finiteVector(
+            c.decode([Double].self, forKey: .sizeMM), count: 3, name: "size_mm")
+        guard sizeMM.allSatisfy({ $0 > 0 }) else {
+            throw DecodingError.dataCorruptedError(forKey: .sizeMM, in: c,
+                                                   debugDescription: "size_mm must be positive")
+        }
+        revision = try c.decode(Int.self, forKey: .revision)
+        guard revision >= 0 else {
+            throw DecodingError.dataCorruptedError(forKey: .revision, in: c,
+                                                   debugDescription: "revision must be non-negative")
+        }
+        collidable = try c.decodeIfPresent(Bool.self, forKey: .collidable) ?? true
+        classification = try c.decodeIfPresent(String.self, forKey: .classification)
+    }
+}
+
+/// Python -> Swift atomic world state. Object and fly poses in this structure
+/// share one simulation-owner boundary; the viewer must never join this with a
+/// separate body or lab_state packet to create a synthetic snapshot.
+struct WorldRenderSnapshot: Decodable, FlyGymStampedPacket {
+    var type: String = "world_render_snapshot"
+    var protocolVersion: Int = 0
+    var sessionID: String = ""
+    var epoch: Int = 0
+    var requestSeq: Int = 0
+    var simTick: Int = 0
+    var ok: Bool = false
+    var error: String?
+    var snapshotID: Int?
+    var revision: Int?
+    var fly: WorldRenderPose?
+    var objects: [WorldRenderObject] = []
+    var player: WorldRenderPose?
+    var receivedAt: Date = Date()
+    var connectionGeneration: UInt64 = 0
+
+    enum CodingKeys: String, CodingKey {
+        case type, epoch, ok, error, objects, fly, player
+        case protocolVersion = "protocol_version"
+        case sessionID = "session_id"
+        case requestSeq = "request_seq"
+        case simTick = "sim_tick"
+        case snapshotSeq = "snapshot_seq"
+        case worldRevision = "world_revision"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        type = try c.decode(String.self, forKey: .type)
+        protocolVersion = try c.decode(Int.self, forKey: .protocolVersion)
+        sessionID = try c.decode(String.self, forKey: .sessionID)
+        epoch = try c.decode(Int.self, forKey: .epoch)
+        requestSeq = try c.decode(Int.self, forKey: .requestSeq)
+        simTick = try c.decode(Int.self, forKey: .simTick)
+        ok = try c.decode(Bool.self, forKey: .ok)
+        error = try c.decodeIfPresent(String.self, forKey: .error)
+        guard protocolVersion >= 0, sessionID.count <= 128, epoch >= 0,
+              requestSeq >= 0, simTick >= 0 else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath,
+                                                    debugDescription: "invalid snapshot envelope"))
+        }
+        if !ok {
+            guard let error, !error.isEmpty else {
+                throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath,
+                                                        debugDescription: "failed snapshot requires error"))
+            }
+            return
+        }
+        snapshotID = try c.decode(Int.self, forKey: .snapshotSeq)
+        revision = try c.decode(Int.self, forKey: .worldRevision)
+        guard let snapshotID, snapshotID > 0, let revision, revision >= 0 else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath,
+                                                    debugDescription: "successful snapshot requires snapshot id and revision"))
+        }
+        fly = try c.decode(WorldRenderPose.self, forKey: .fly)
+        objects = try c.decode([WorldRenderObject].self, forKey: .objects)
+        player = try c.decodeIfPresent(WorldRenderPose.self, forKey: .player)
+        guard Set(objects.map(\.id)).count == objects.count else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath,
+                                                    debugDescription: "snapshot object ids must be unique"))
+        }
+    }
+}
+
+struct WorldRenderRequest: Encodable {
+    var type = "world_render_request"
+    var protocolVersion = FlyGymProtocolV4.version
+    var sessionID: String
+    var epoch: Int
+    var seq: Int
+
+    enum CodingKeys: String, CodingKey {
+        case type, epoch, seq
+        case protocolVersion = "protocol_version"
+        case sessionID = "session_id"
+    }
+}
+
+struct RayPickRequest: Encodable {
+    var type = "ray_pick_request"
+    var protocolVersion = FlyGymProtocolV4.version
+    var sessionID: String
+    var epoch: Int
+    var seq: Int
+    var sourceSnapshotSeq: Int
+    var sourceWorldRevision: Int
+    var sourceSimTick: Int
+    var rayOriginMM: [Double]
+    var rayDirection: [Double]
+
+    enum CodingKeys: String, CodingKey {
+        case type, epoch, seq
+        case protocolVersion = "protocol_version"
+        case sessionID = "session_id"
+        case sourceSnapshotSeq = "source_snapshot_seq"
+        case sourceWorldRevision = "source_world_revision"
+        case sourceSimTick = "source_sim_tick"
+        case rayOriginMM = "ray_origin_mm"
+        case rayDirection = "ray_direction"
+    }
+}
+
+struct RayPickResult: Decodable, FlyGymStampedPacket {
+    var type: String = "ray_pick_result"
+    var protocolVersion: Int = 0
+    var sessionID: String = ""
+    var epoch: Int = 0
+    var seq: Int = 0
+    var simTick: Int = 0
+    var revision: Int = 0
+    var sourceSnapshotSeq: Int = 0
+    var sourceWorldRevision: Int = 0
+    var sourceSimTick: Int = 0
+    var ok: Bool = false
+    var hit: Bool = false
+    var error: String?
+    var targetID: String?
+    var targetKind: String?
+    var distanceMM: Double?
+    var pointMM: [Double]?
+    var normalWorld: [Double]?
+    var geomID: Int?
+    var receivedAt: Date = Date()
+    var connectionGeneration: UInt64 = 0
+
+    enum CodingKeys: String, CodingKey {
+        case type, epoch, seq, ok, hit, error
+        case protocolVersion = "protocol_version"
+        case sessionID = "session_id"
+        case simTick = "sim_tick"
+        case revision = "world_revision"
+        case sourceSnapshotSeq = "source_snapshot_seq"
+        case sourceWorldRevision = "source_world_revision"
+        case sourceSimTick = "source_sim_tick"
+        case targetID = "target_id"
+        case targetKind = "target_kind"
+        case distanceMM = "distance_mm"
+        case pointMM = "point_mm"
+        case normalWorld = "normal_world"
+        case geomID = "geom_id"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        type = try c.decode(String.self, forKey: .type)
+        protocolVersion = try c.decode(Int.self, forKey: .protocolVersion)
+        sessionID = try c.decode(String.self, forKey: .sessionID)
+        epoch = try c.decode(Int.self, forKey: .epoch)
+        seq = try c.decode(Int.self, forKey: .seq)
+        simTick = try c.decode(Int.self, forKey: .simTick)
+        revision = try c.decode(Int.self, forKey: .revision)
+        sourceSnapshotSeq = try c.decode(Int.self, forKey: .sourceSnapshotSeq)
+        sourceWorldRevision = try c.decode(Int.self, forKey: .sourceWorldRevision)
+        sourceSimTick = try c.decode(Int.self, forKey: .sourceSimTick)
+        ok = try c.decode(Bool.self, forKey: .ok)
+        hit = try c.decode(Bool.self, forKey: .hit)
+        error = try c.decodeIfPresent(String.self, forKey: .error)
+        guard protocolVersion >= 0, sessionID.count <= 128, epoch >= 0, seq >= 0,
+              simTick >= 0, revision >= 0, sourceSnapshotSeq > 0,
+              sourceWorldRevision >= 0, sourceSimTick >= 0 else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath,
+                                                    debugDescription: "invalid pick result envelope"))
+        }
+        if !ok {
+            guard !hit, let error, !error.isEmpty else {
+                throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath,
+                                                        debugDescription: "failed pick requires error and hit=false"))
+            }
+            return
+        }
+        guard hit else { return }
+        let id = try c.decode(String.self, forKey: .targetID).trimmingCharacters(in: .whitespacesAndNewlines)
+        let kind = try c.decode(String.self, forKey: .targetKind).trimmingCharacters(in: .whitespacesAndNewlines)
+        let distance = try c.decode(Double.self, forKey: .distanceMM)
+        let point = try WorldRenderDecode.finiteVector(
+            c.decode([Double].self, forKey: .pointMM), count: 3, name: "point_mm")
+        let normal = try WorldRenderDecode.finiteVector(
+            c.decode([Double].self, forKey: .normalWorld), count: 3, name: "normal_world")
+        let normalNorm = sqrt(normal.reduce(0) { $0 + $1 * $1 })
+        let geom = try c.decode(Int.self, forKey: .geomID)
+        guard !id.isEmpty, id.count <= 128, !kind.isEmpty, kind.count <= 32,
+              distance.isFinite, distance >= 0, normalNorm >= 1e-12, geom >= 0 else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath,
+                                                    debugDescription: "invalid pick hit payload"))
+        }
+        targetID = id; targetKind = kind; distanceMM = distance; pointMM = point
+        normalWorld = normal.map { $0 / normalNorm }; geomID = geom
+    }
+}
+
 /// Render-owner snapshot copied under Coordinator's lock. It contains only
 /// scalars/short strings so the AppKit timer never reaches into Metal buffers.
 struct LabTelemetry {

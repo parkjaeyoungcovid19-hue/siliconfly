@@ -52,11 +52,15 @@ enum FlyGymProtocolV4 {
     static let capabilities = ["applied_tick", "deterministic_experiment", "epoch", "pause_barrier"]
 }
 
+enum FlyGymViewerProtocolV5_1 {
+    static let capabilities = ["world_render_snapshot", "ray_pick"]
+}
+
 struct FlyGymHelloPacket: Codable, FlyGymStampedPacket {
     var type: String = "hello"
     var protocolVersion: Int = FlyGymProtocolV4.version
     var role: String = "swift"
-    var capabilities: [String] = FlyGymProtocolV4.capabilities
+    var capabilities: [String] = FlyGymProtocolV4.capabilities + FlyGymViewerProtocolV5_1.capabilities
     var physicsTimestepS: Double?
     var supportedQuantumTicks: [Int] = [FlyGymProtocolV4.experimentQuantumTicks]
     var receivedAt: Date = Date()
@@ -74,6 +78,11 @@ struct FlyGymHelloPacket: Codable, FlyGymStampedPacket {
               supportedQuantumTicks.contains(FlyGymProtocolV4.experimentQuantumTicks),
               let physicsTimestepS, physicsTimestepS.isFinite, physicsTimestepS > 0 else { return false }
         return Set(FlyGymProtocolV4.capabilities).isSubset(of: Set(capabilities))
+    }
+
+    var supportsWorldViewerV5_1: Bool {
+        guard protocolVersion >= FlyGymProtocolV4.version else { return false }
+        return Set(FlyGymViewerProtocolV5_1.capabilities).isSubset(of: Set(capabilities))
     }
 }
 
@@ -335,6 +344,18 @@ func parseExperimentStepResultLine(_ line: Data) -> FlyGymExperimentStepResultPa
     return try? JSONDecoder().decode(FlyGymExperimentStepResultPacket.self, from: line)
 }
 
+func parseWorldRenderSnapshotLine(_ line: Data) -> WorldRenderSnapshot? {
+    guard let tag = try? JSONDecoder().decode(FlyGymTaggedLine.self, from: line),
+          tag.type == "world_render_snapshot" else { return nil }
+    return try? JSONDecoder().decode(WorldRenderSnapshot.self, from: line)
+}
+
+func parseRayPickResultLine(_ line: Data) -> RayPickResult? {
+    guard let tag = try? JSONDecoder().decode(FlyGymTaggedLine.self, from: line),
+          tag.type == "ray_pick_result" else { return nil }
+    return try? JSONDecoder().decode(RayPickResult.self, from: line)
+}
+
 struct FlyGymBodyFeedback: FlyGymStampedPacket {
     /// MuJoCo/FlyGym simulation time in seconds from the body packet.
     var simTime: Double = 0
@@ -469,6 +490,8 @@ fileprivate enum FlyGymSendLane: Int {
     case lab = 2
     case control = 3
     case experimentStep = 4
+    case worldRender = 5
+    case rayPick = 6
 }
 
 fileprivate struct FlyGymPendingSend {
@@ -507,8 +530,11 @@ final class FlyGymBridge {
     private var pendingLab: [Data] = [] // ordered lab commands (bounded FIFO, cap 32)
     private var pendingControl: [Data] = []
     private var pendingExperimentStep: Data?
+    private var pendingWorldRenderRequest: Data?
+    private var pendingRayPicks: [Data] = []
     private let labQueueCap = 32
     private let controlQueueCap = 16
+    private let rayPickQueueCap = 8
     private var pendingCount = 0        // packets coalesced since last send
     private var droppedCoalesced: Int = 0
     private var droppedLab: Int = 0
@@ -519,12 +545,15 @@ final class FlyGymBridge {
     private var _serverHello: FlyGymHelloPacket?
     private var _latestSessionState: FlyGymSessionStatePacket?
     private var _latestExperimentStepResult: FlyGymExperimentStepResultPacket?
+    private var _latestWorldRenderSnapshot: WorldRenderSnapshot?
+    private var _latestRayPickResult: RayPickResult?
     private var requestedSessionID: String?
     private var requestedEpoch: Int?
     private var requestedSessionMode: LabSessionMode?
     private var outstandingExperimentStepSeq: Int?
     private var nextSessionControlSeq = 1
     private var nextLabID = 1
+    private var nextViewerSeq = 1
     private var lastSend = Date.distantPast
     private var lastNormalBrainSendAt = Date.distantPast
     private var lastBodyAt: Date?
@@ -555,6 +584,13 @@ final class FlyGymBridge {
         return hello.supportsDeterministicV4
     }
 
+    var worldViewerV5_1Available: Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard _connected, let hello = _serverHello,
+              hello.connectionGeneration == _connectionGeneration else { return false }
+        return hello.supportsWorldViewerV5_1
+    }
+
     func serverHello() -> FlyGymHelloPacket? {
         lock.lock(); defer { lock.unlock() }
         guard let hello = _serverHello, _connected,
@@ -573,6 +609,22 @@ final class FlyGymBridge {
         lock.lock(); defer { lock.unlock() }
         guard let result = _latestExperimentStepResult, _connected,
               result.connectionGeneration == _connectionGeneration else { return nil }
+        return result
+    }
+
+    func latestWorldRenderSnapshot(maxAge: TimeInterval = 1.0) -> WorldRenderSnapshot? {
+        lock.lock(); defer { lock.unlock() }
+        guard let snapshot = _latestWorldRenderSnapshot,
+              _connected, snapshot.connectionGeneration == _connectionGeneration,
+              max(0, Date().timeIntervalSince(snapshot.receivedAt)) < maxAge else { return nil }
+        return snapshot
+    }
+
+    func latestRayPickResult(maxAge: TimeInterval = FlyGymBridge.labDiscreteFreshMaxAge) -> RayPickResult? {
+        lock.lock(); defer { lock.unlock() }
+        guard let result = _latestRayPickResult,
+              _connected, result.connectionGeneration == _connectionGeneration,
+              max(0, Date().timeIntervalSince(result.receivedAt)) < maxAge else { return nil }
         return result
     }
 
@@ -788,10 +840,14 @@ final class FlyGymBridge {
             _latestLabState = nil
             _latestLabAck = nil
             _latestLabEvent = nil
+            _latestWorldRenderSnapshot = nil
+            _latestRayPickResult = nil
             lastBodyAt = nil
             bodyIntervals.removeAll(keepingCapacity: true)
             outstandingExperimentStepSeq = nil
             pendingExperimentStep = nil
+            pendingWorldRenderRequest = nil
+            pendingRayPicks.removeAll(keepingCapacity: true)
         } else if action == "reset", requestedSessionID == sessionID {
             // Reset is the one lifecycle control that intentionally changes the
             // simulation epoch. Promote the expected epoch before the packet is
@@ -804,10 +860,14 @@ final class FlyGymBridge {
             _latestLabState = nil
             _latestLabAck = nil
             _latestLabEvent = nil
+            _latestWorldRenderSnapshot = nil
+            _latestRayPickResult = nil
             lastBodyAt = nil
             bodyIntervals.removeAll(keepingCapacity: true)
             outstandingExperimentStepSeq = nil
             pendingExperimentStep = nil
+            pendingWorldRenderRequest = nil
+            pendingRayPicks.removeAll(keepingCapacity: true)
         }
         pendingControl.append(data)
         return seq
@@ -829,6 +889,69 @@ final class FlyGymBridge {
         pendingExperimentStep = data
         outstandingExperimentStepSeq = seq
         return true
+    }
+
+    /// Request one immutable backend-originated render snapshot. Requests are
+    /// latest-wins because they are observation only; no simulation mutation is
+    /// represented by this lane.
+    @discardableResult
+    func requestWorldRenderSnapshot() -> Int? {
+        lock.lock()
+        guard _connected, let hello = _serverHello,
+              hello.connectionGeneration == _connectionGeneration,
+              hello.supportsWorldViewerV5_1 else { lock.unlock(); return nil }
+        let seq = nextViewerSeq
+        nextViewerSeq = nextViewerSeq == Int.max ? 1 : nextViewerSeq + 1
+        let sessionID = requestedSessionID ?? ""
+        let epoch = requestedEpoch ?? 0
+        let protocolVersion = max(FlyGymProtocolV4.version, hello.protocolVersion)
+        lock.unlock()
+
+        var packet = WorldRenderRequest(sessionID: sessionID, epoch: epoch, seq: seq)
+        packet.protocolVersion = protocolVersion
+        guard let data = encodeLine(packet) else { return nil }
+        lock.lock(); defer { lock.unlock() }
+        guard _connected else { return nil }
+        pendingWorldRenderRequest = data
+        return seq
+    }
+
+    /// Send a read-only ray query. SceneKit only computes the ray; Python/MuJoCo
+    /// decides the authoritative hit against the current simulation-owner state.
+    @discardableResult
+    func sendRayPick(rayOriginMM: [Double], rayDirection: [Double],
+                     sourceSnapshotSeq: Int, sourceWorldRevision: Int,
+                     sourceSimTick: Int) -> Int? {
+        guard rayOriginMM.count == 3, rayOriginMM.allSatisfy(\.isFinite),
+              rayDirection.count == 3, rayDirection.allSatisfy(\.isFinite) else { return nil }
+        guard sourceSnapshotSeq > 0, sourceWorldRevision >= 0, sourceSimTick >= 0 else { return nil }
+        let norm = sqrt(rayDirection.reduce(0) { $0 + $1 * $1 })
+        guard norm >= 1e-12 else { return nil }
+        let direction = rayDirection.map { $0 / norm }
+
+        lock.lock()
+        guard _connected, let hello = _serverHello,
+              hello.connectionGeneration == _connectionGeneration,
+              hello.supportsWorldViewerV5_1,
+              pendingRayPicks.count < rayPickQueueCap else { lock.unlock(); return nil }
+        let seq = nextViewerSeq
+        nextViewerSeq = nextViewerSeq == Int.max ? 1 : nextViewerSeq + 1
+        let sessionID = requestedSessionID ?? ""
+        let epoch = requestedEpoch ?? 0
+        let protocolVersion = max(FlyGymProtocolV4.version, hello.protocolVersion)
+        lock.unlock()
+
+        var packet = RayPickRequest(sessionID: sessionID, epoch: epoch, seq: seq,
+                                    sourceSnapshotSeq: sourceSnapshotSeq,
+                                    sourceWorldRevision: sourceWorldRevision,
+                                    sourceSimTick: sourceSimTick,
+                                    rayOriginMM: rayOriginMM, rayDirection: direction)
+        packet.protocolVersion = protocolVersion
+        guard let data = encodeLine(packet) else { return nil }
+        lock.lock(); defer { lock.unlock() }
+        guard _connected, pendingRayPicks.count < rayPickQueueCap else { return nil }
+        pendingRayPicks.append(data)
+        return seq
     }
 
     /// Enqueue one ordered experiment command. AppKit calls this directly; it
@@ -889,6 +1012,7 @@ final class FlyGymBridge {
         lock.lock(); defer { lock.unlock() }
         return (pending == nil ? 0 : 1) + (pendingEscape == nil ? 0 : 1)
             + pendingLab.count + pendingControl.count + (pendingExperimentStep == nil ? 0 : 1)
+            + (pendingWorldRenderRequest == nil ? 0 : 1) + pendingRayPicks.count
     }
 
 
@@ -902,6 +1026,8 @@ final class FlyGymBridge {
         _serverHello = nil
         _latestSessionState = nil
         _latestExperimentStepResult = nil
+        _latestWorldRenderSnapshot = nil
+        _latestRayPickResult = nil
         outstandingExperimentStepSeq = nil
         pendingExperimentStep = nil
         lastBodyAt = nil
@@ -920,6 +1046,14 @@ final class FlyGymBridge {
         if let sessionID, sessionID != expectedSession { return false }
         if let epoch, epoch != expectedEpoch { return false }
         return true
+    }
+
+    private func matchesViewerSessionLocked(sessionID: String, epoch: Int) -> Bool {
+        if let expectedSession = requestedSessionID {
+            return sessionID == expectedSession && epoch == requestedEpoch
+        }
+        // The backend uses this explicit identity before a V4 session begins.
+        return sessionID.isEmpty && epoch == 0
     }
 
     private func recordDroppedLabLocked(_ data: Data, reason: String) {
@@ -941,6 +1075,8 @@ final class FlyGymBridge {
         if _connectionGeneration == 0 { _connectionGeneration = 1 }
         clearRemoteStateLocked()
         pendingControl.removeAll(keepingCapacity: true)
+        pendingWorldRenderRequest = nil
+        pendingRayPicks.removeAll(keepingCapacity: true)
         if let hello = encodeLine(FlyGymHelloPacket()) {
             pendingControl.append(hello)
         }
@@ -980,6 +1116,13 @@ final class FlyGymBridge {
         if !pendingLab.isEmpty {
             return FlyGymPendingSend(lane: .lab, data: pendingLab.removeFirst())
         }
+        if !pendingRayPicks.isEmpty {
+            return FlyGymPendingSend(lane: .rayPick, data: pendingRayPicks.removeFirst())
+        }
+        if let request = pendingWorldRenderRequest {
+            pendingWorldRenderRequest = nil
+            return FlyGymPendingSend(lane: .worldRender, data: request)
+        }
         if let brain = pending {
             pending = nil
             return FlyGymPendingSend(lane: .brain, data: brain)
@@ -1007,6 +1150,13 @@ final class FlyGymBridge {
             if pendingControl.count > controlQueueCap { pendingControl.removeLast() }
         case .experimentStep:
             if pendingExperimentStep == nil { pendingExperimentStep = item.data }
+        case .worldRender:
+            // Observation requests are latest-wins. If a newer request arrived
+            // during send(), keep the newer one.
+            if pendingWorldRenderRequest == nil { pendingWorldRenderRequest = item.data }
+        case .rayPick:
+            pendingRayPicks.insert(item.data, at: 0)
+            if pendingRayPicks.count > rayPickQueueCap { pendingRayPicks.removeLast() }
         }
     }
 
@@ -1080,6 +1230,50 @@ final class FlyGymBridge {
                 _latestBody = fb
                 recvCount += 1
             }
+            lock.unlock()
+            return true
+        }
+        if var snapshot = parseWorldRenderSnapshotLine(line) {
+            snapshot.receivedAt = receivedAt
+            snapshot.connectionGeneration = generation
+            lock.lock()
+            guard currentConnectionLocked(fd: fd, generation: generation) else {
+                lock.unlock(); return true
+            }
+            guard _serverHello?.supportsWorldViewerV5_1 == true,
+                  matchesViewerSessionLocked(sessionID: snapshot.sessionID, epoch: snapshot.epoch) else {
+                staleSessionPacketCount += 1
+                lock.unlock(); return true
+            }
+            if snapshot.ok, let incomingID = snapshot.snapshotID,
+               let previous = _latestWorldRenderSnapshot,
+               previous.ok, previous.sessionID == snapshot.sessionID,
+               previous.epoch == snapshot.epoch,
+               let previousID = previous.snapshotID, incomingID <= previousID {
+                lock.unlock(); return true
+            }
+            _latestWorldRenderSnapshot = snapshot
+            lock.unlock()
+            return true
+        }
+        if var pick = parseRayPickResultLine(line) {
+            pick.receivedAt = receivedAt
+            pick.connectionGeneration = generation
+            lock.lock()
+            guard currentConnectionLocked(fd: fd, generation: generation) else {
+                lock.unlock(); return true
+            }
+            guard _serverHello?.supportsWorldViewerV5_1 == true,
+                  matchesViewerSessionLocked(sessionID: pick.sessionID, epoch: pick.epoch) else {
+                staleSessionPacketCount += 1
+                lock.unlock(); return true
+            }
+            if let previous = _latestRayPickResult,
+               previous.sessionID == pick.sessionID, previous.epoch == pick.epoch,
+               pick.seq < previous.seq {
+                lock.unlock(); return true
+            }
+            _latestRayPickResult = pick
             lock.unlock()
             return true
         }
@@ -1291,6 +1485,8 @@ final class FlyGymBridge {
                         controlSentCount += 1
                     case .experimentStep:
                         experimentStepSentCount += 1
+                    case .worldRender, .rayPick:
+                        break
                     }
                     lastSend = sentAt
                 }
@@ -1464,6 +1660,138 @@ func runBridgeTest() {
         }
     }
     check("malformed rejected", malformed == 5, "\(malformed)/5")
+
+    // V5.1 atomic render protocol. The viewport may only consume this packet;
+    // malformed/mixed payloads never fall back to joining body + lab_state.
+    let snapshotLine = #"{"type":"world_render_snapshot","protocol_version":4,"session_id":"","epoch":0,"request_seq":1,"sim_tick":40,"ok":true,"snapshot_seq":2,"world_revision":3,"fly":{"id":"fly","position_mm":[1.0,2.0,0.7],"orientation_quat_xyzw":[0.0,0.0,0.0,1.0]},"objects":[{"id":"box_1","shape":"box","position_mm":[12.0,-3.0,4.0],"orientation_quat_xyzw":[0.0,0.0,0.0,1.0],"size_mm":[6.0,8.0,8.0],"revision":2,"collidable":true}]}"#
+    let snapshotParsed = parseWorldRenderSnapshotLine(Data(snapshotLine.utf8))
+    check("V5 atomic world snapshot strict parse",
+          snapshotParsed?.snapshotID == 2 && snapshotParsed?.revision == 3
+          && snapshotParsed?.simTick == 40 && snapshotParsed?.objects.first?.id == "box_1"
+          && snapshotParsed?.fly?.positionMM == [1.0, 2.0, 0.7])
+    let badSnapshotVector = #"{"type":"world_render_snapshot","protocol_version":4,"session_id":"","epoch":0,"request_seq":1,"sim_tick":40,"ok":true,"snapshot_seq":2,"world_revision":3,"fly":{"id":"fly","position_mm":[1.0,2.0],"orientation_quat_xyzw":[0,0,0,1]},"objects":[]}"#
+    let badSnapshotQuat = #"{"type":"world_render_snapshot","protocol_version":4,"session_id":"","epoch":0,"request_seq":1,"sim_tick":40,"ok":true,"snapshot_seq":2,"world_revision":3,"fly":{"id":"fly","position_mm":[1,2,0.7],"orientation_quat_xyzw":[0,0,0,0]},"objects":[]}"#
+    let aliasSnapshot = #"{"type":"world_render_snapshot","protocol_version":4,"session_id":"","epoch":0,"request_seq":1,"sim_tick":40,"ok":true,"snapshot_id":2,"revision":3,"fly":{"id":"fly","position_mm":[1,2,0.7],"orientation_quat_xyzw":[0,0,0,1]},"objects":[]}"#
+    check("V5 snapshot rejects invalid vector/quaternion",
+          parseWorldRenderSnapshotLine(Data(badSnapshotVector.utf8)) == nil
+          && parseWorldRenderSnapshotLine(Data(badSnapshotQuat.utf8)) == nil)
+    check("V5 snapshot wire names are canonical",
+          parseWorldRenderSnapshotLine(Data(aliasSnapshot.utf8)) == nil)
+
+    let v5Bridge = FlyGymBridge()
+    let v5Generation = v5Bridge.beginConnectionForTesting()
+    // Drain Swift's hello, then install a server hello that explicitly advertises
+    // V5.1. A V4-only peer must leave the viewport disabled.
+    _ = v5Bridge.dequeueLaneForTesting(at: Date())
+    let v5Hello = #"{"type":"hello","protocol_version":4,"role":"python","capabilities":["applied_tick","deterministic_experiment","epoch","pause_barrier","world_render_snapshot","ray_pick"],"physics_timestep_s":0.001,"supported_quantum_ticks":[20]}"#
+    _ = v5Bridge.receiveLineForTesting(Data(v5Hello.utf8))
+    check("V5 viewer requires explicit server capabilities", v5Bridge.worldViewerV5_1Available)
+    let renderRequestSeq = v5Bridge.requestWorldRenderSnapshot()
+    let renderLane = v5Bridge.dequeueLaneForTesting(at: Date().addingTimeInterval(0.02))
+    check("V5 render request has bounded observation lane",
+          renderRequestSeq != nil && renderLane == .worldRender)
+    _ = v5Bridge.receiveLineForTesting(Data(snapshotLine.utf8))
+    let acceptedSnapshot = v5Bridge.latestWorldRenderSnapshot()
+    check("V5 sessionless snapshot accepted + generation stamped",
+          acceptedSnapshot?.snapshotID == 2
+          && acceptedSnapshot?.connectionGeneration == v5Generation)
+    let olderSnapshot = snapshotLine.replacingOccurrences(of: #""snapshot_seq":2"#,
+                                                           with: #""snapshot_seq":1"#)
+    _ = v5Bridge.receiveLineForTesting(Data(olderSnapshot.utf8))
+    check("V5 stale snapshot cannot replace newer snapshot",
+          v5Bridge.latestWorldRenderSnapshot()?.snapshotID == 2)
+
+    let pickSeq = v5Bridge.sendRayPick(rayOriginMM: [0, -20, 10], rayDirection: [0, 2, -1],
+                                          sourceSnapshotSeq: 2, sourceWorldRevision: 3,
+                                          sourceSimTick: 40)
+    let pickLane = v5Bridge.dequeueLaneForTesting(at: Date().addingTimeInterval(0.04))
+    check("V5 ray pick uses separate bounded read-only lane", pickSeq != nil && pickLane == .rayPick)
+    if let pickSeq {
+        let pickLine = "{\"type\":\"ray_pick_result\",\"protocol_version\":4,\"session_id\":\"\",\"epoch\":0,\"seq\":\(pickSeq),\"sim_tick\":40,\"world_revision\":3,\"source_snapshot_seq\":2,\"source_world_revision\":3,\"source_sim_tick\":40,\"ok\":true,\"hit\":true,\"target_id\":\"box_1\",\"target_kind\":\"lab_object\",\"distance_mm\":12.5,\"point_mm\":[1,2,3],\"normal_world\":[0,0,2],\"geom_id\":7}"
+        _ = v5Bridge.receiveLineForTesting(Data(pickLine.utf8))
+        let pick = v5Bridge.latestRayPickResult()
+        check("V5 authoritative pick result echoes source + carries hit point/normal",
+              pick?.seq == pickSeq && pick?.targetID == "box_1"
+              && pick?.sourceSnapshotSeq == 2 && pick?.sourceWorldRevision == 3
+              && pick?.sourceSimTick == 40
+              && pick?.pointMM == [1, 2, 3] && pick?.normalWorld == [0, 0, 1])
+
+        let source = WorldViewerSnapshotSource(snapshotSeq: 2, worldRevision: 3, simTick: 40)
+        let poseAdvancedLine = pickLine
+            .replacingOccurrences(of: #""sim_tick":40,"world_revision":3"#,
+                                  with: #""sim_tick":41,"world_revision":4"#)
+        let poseAdvancedPick = parseRayPickResultLine(Data(poseAdvancedLine.utf8))
+        check("V5 pick UI accepts pose-advanced successful ACK after source validation",
+              poseAdvancedPick.map {
+                  worldViewerPickDisposition($0, latestRequestSeq: pickSeq,
+                                             consumedSeq: nil, expectedSource: source) == .applySuccess
+              } == true)
+
+        let errorLine = "{\"type\":\"ray_pick_result\",\"protocol_version\":4,\"session_id\":\"\",\"epoch\":0,\"seq\":\(pickSeq),\"sim_tick\":42,\"world_revision\":5,\"source_snapshot_seq\":2,\"source_world_revision\":3,\"source_sim_tick\":40,\"ok\":false,\"hit\":false,\"error\":\"stale source world revision\"}"
+        let errorPick = parseRayPickResultLine(Data(errorLine.utf8))
+        check("V5 pick UI always consumes matching backend error ACK",
+              errorPick.map {
+                  worldViewerPickDisposition($0, latestRequestSeq: pickSeq,
+                                             consumedSeq: nil, expectedSource: source) == .showError
+              } == true)
+        check("V5 pick UI ignores stale successful ACK from older request",
+              poseAdvancedPick.map {
+                  worldViewerPickDisposition($0, latestRequestSeq: pickSeq + 1,
+                                             consumedSeq: nil, expectedSource: source) == .ignore
+              } == true)
+    } else {
+        check("V5 authoritative pick result echoes source + carries hit point/normal", false)
+        check("V5 pick UI accepts pose-advanced successful ACK after source validation", false)
+        check("V5 pick UI always consumes matching backend error ACK", false)
+        check("V5 pick UI ignores stale successful ACK from older request", false)
+    }
+
+    let missingPickSource = #"{"type":"ray_pick_result","protocol_version":4,"session_id":"","epoch":0,"seq":9,"sim_tick":40,"world_revision":3,"ok":true,"hit":false}"#
+    check("V5 pick result requires source snapshot metadata",
+          parseRayPickResultLine(Data(missingPickSource.utf8)) == nil)
+
+    // Active V4 session identity is also authoritative for V5 observation traffic.
+    // Delayed old-epoch render/pick responses must never refill the cache after a
+    // reset promoted the bridge to a newer epoch.
+    let v5EpochFilter = FlyGymBridge()
+    _ = v5EpochFilter.beginConnectionForTesting()
+    _ = v5EpochFilter.dequeueLaneForTesting(at: Date()) // Swift hello
+    _ = v5EpochFilter.receiveLineForTesting(Data(v5Hello.utf8))
+    _ = v5EpochFilter.sendSessionControl(action: "begin", sessionID: "v5-epoch",
+                                         epoch: 2, simTick: 0, mode: .deterministic)
+    let oldEpochSnapshot = snapshotLine
+        .replacingOccurrences(of: #""session_id":"""#, with: #""session_id":"v5-epoch""#)
+        .replacingOccurrences(of: #""epoch":0"#, with: #""epoch":1"#)
+    let staleV5Before = v5EpochFilter.staleSessionPacketCount
+    _ = v5EpochFilter.receiveLineForTesting(Data(oldEpochSnapshot.utf8))
+    let oldEpochPick = #"{"type":"ray_pick_result","protocol_version":4,"session_id":"v5-epoch","epoch":1,"seq":77,"sim_tick":40,"world_revision":3,"source_snapshot_seq":2,"source_world_revision":3,"source_sim_tick":40,"ok":true,"hit":false}"#
+    _ = v5EpochFilter.receiveLineForTesting(Data(oldEpochPick.utf8))
+    check("V5 active-session old-epoch responses rejected",
+          v5EpochFilter.latestWorldRenderSnapshot() == nil
+          && v5EpochFilter.latestRayPickResult() == nil
+          && v5EpochFilter.staleSessionPacketCount == staleV5Before + 2)
+
+    let v4Only = FlyGymBridge()
+    _ = v4Only.beginConnectionForTesting()
+    _ = v4Only.receiveLineForTesting(Data(#"{"type":"hello","protocol_version":4,"role":"python","capabilities":["applied_tick","deterministic_experiment","epoch","pause_barrier"],"physics_timestep_s":0.001,"supported_quantum_ticks":[20]}"#.utf8))
+    check("V4-only peer does not silently enable V5 viewport",
+          !v4Only.worldViewerV5_1Available && v4Only.requestWorldRenderSnapshot() == nil)
+
+    // MuJoCo z-up <-> SceneKit y-up basis must be exact or the displayed pose
+    // and the authoritative backend pick ray refer to different geometry.
+    let sceneAxis = WorldViewerCoordinates.sceneComponents(fromMuJoCo: [1, 2, 3])
+    let axisRoundTrip = WorldViewerCoordinates.mujocoComponents(fromScene: sceneAxis)
+    check("V5 viewport coordinate basis round-trip",
+          sceneAxis == [1, 3, -2] && axisRoundTrip == [1, 2, 3])
+    let half = Double.pi / 4
+    let yaw90Scene = WorldViewerCoordinates.sceneQuaternionXYZW(
+        fromMuJoCo: [0, 0, sin(half), cos(half)])
+    check("V5 MuJoCo +Z yaw maps to SceneKit +Y yaw",
+          abs(yaw90Scene[0]) < 1e-12 && abs(yaw90Scene[1] - sin(half)) < 1e-12
+          && abs(yaw90Scene[2]) < 1e-12 && abs(yaw90Scene[3] - cos(half)) < 1e-12)
+    let rayScene = WorldViewerCoordinates.sceneComponents(fromMuJoCo: [0.25, -0.5, 0.75])
+    let rayBack = WorldViewerCoordinates.mujocoComponents(fromScene: rayScene)
+    check("V5 pick ray uses inverse viewport basis", zip(rayBack, [0.25, -0.5, 0.75]).allSatisfy { abs($0 - $1) < 1e-12 })
     // sensory map: standing contact is not gait; fresh real body is authoritative;
     // stale/missing real body falls back to the desktop procedural fly.
     var still = FlyGymBodyFeedback()
@@ -1761,7 +2089,7 @@ func runBridgeTest() {
                 labSends += 1
             case .escape:
                 break
-            case .control, .experimentStep:
+            case .control, .experimentStep, .worldRender, .rayPick:
                 break
             }
         }

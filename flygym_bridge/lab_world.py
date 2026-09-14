@@ -104,6 +104,7 @@ class LabObject:
     position_mm: list
     size_mm: list
     yaw_deg: float = 0.0
+    revision: int = 0
 
     def state(self):
         food = self.shape == "food"
@@ -113,6 +114,7 @@ class LabObject:
             "position_mm": [float(v) for v in self.position_mm],
             "size_mm": [float(v) for v in self.size_mm],
             "yaw_deg": float(self.yaw_deg),
+            "revision": int(self.revision),
             "classification": PHYSICAL,
             "visual_marker_only": False,
         }
@@ -163,6 +165,13 @@ class LabWorld:
         }
         self._slot_ids = {}
         self._counter = 0
+        self.revision = 0
+        # Render revision advances for every visible pose/size/topology change.
+        # Structural revision advances only when the ray-query scene contract is
+        # invalidated (objects added/removed/resized/reset). Pure pose motion is
+        # intentionally excluded so a just-rendered frame may still be used as
+        # provenance for a current-owner ray while an approach is moving.
+        self.structure_revision = 0
         self._bound = False
         self._mujoco = None
         self.model = None
@@ -290,6 +299,14 @@ class LabWorld:
     # ------------------------------------------------------------------
     # Object lifecycle
     # ------------------------------------------------------------------
+    def _bump_revision(self, obj=None, *, structural=False):
+        self.revision += 1
+        if structural:
+            self.structure_revision += 1
+        if obj is not None:
+            obj.revision = self.revision
+        return self.revision
+
     def _object_id(self, requested, shape):
         if requested is not None:
             object_id = str(requested).strip()
@@ -349,6 +366,7 @@ class LabWorld:
             yaw_deg=_clamp(yaw_deg, -36000.0, 36000.0, 0.0) % 360.0,
         )
         self.objects[object_id] = obj
+        self._bump_revision(obj, structural=True)
         self._sync_object(obj)
         return obj.state()
 
@@ -360,12 +378,14 @@ class LabWorld:
                                for i, v in enumerate(raw)]
         if yaw_deg is not None:
             obj.yaw_deg = _clamp(yaw_deg, -36000.0, 36000.0, obj.yaw_deg) % 360.0
+        self._bump_revision(obj)
         self._sync_object(obj)
         return obj.state()
 
     def resize_object(self, object_id, *, size_mm):
         obj = self._require_object(object_id)
         obj.size_mm = self._sanitize_size(obj.shape, size_mm)
+        self._bump_revision(obj, structural=True)
         self._sync_object(obj)
         return obj.state()
 
@@ -375,6 +395,7 @@ class LabWorld:
         self._deactivate_slot(obj.slot)
         del self.objects[obj.object_id]
         self._free_slots[obj.shape].append(obj.slot)
+        self._bump_revision(structural=True)
         return obj.state()
 
     def reset(self):
@@ -403,6 +424,7 @@ class LabWorld:
                                 neural_connected=False, neural_target=None,
                                 controller_tempo_via_brain_packet=False)
         self.events.clear()
+        self._bump_revision(structural=True)
 
     def _require_object(self, object_id):
         object_id = str(object_id or "")
@@ -632,6 +654,7 @@ class LabWorld:
             if distance > 1e-9 and step > 0.0:
                 obj.position_mm[0] += dx / distance * step
                 obj.position_mm[1] += dy / distance * step
+                self._bump_revision(obj)
                 self._sync_object(obj)
             if distance - step <= motion.end_distance_mm + 1e-6:
                 finished.append(object_id)
@@ -822,9 +845,66 @@ class LabWorld:
             "neural_connected": False,
         }
 
+    def render_objects(self):
+        """Return the authoritative render geometry visible to V5 clients.
+
+        Bound mode reads pose/size back from the live MuJoCo model/data so the
+        viewport snapshot describes the same geometry used for rendering and
+        collision. Mock mode emits the equivalent semantic state.
+        """
+        rendered = []
+        for object_id in sorted(self.objects):
+            obj = self.objects[object_id]
+            if self._bound:
+                _, gid, mocap_id = self._slot_ids[obj.slot]
+                if mocap_id >= 0:
+                    pos = [float(v) for v in self.data.mocap_pos[mocap_id]]
+                    quat_wxyz = [float(v) for v in self.data.mocap_quat[mocap_id]]
+                else:
+                    bid, _, _ = self._slot_ids[obj.slot]
+                    pos = [float(v) for v in self.model.body_pos[bid]]
+                    quat_wxyz = [float(v) for v in self.model.body_quat[bid]]
+                if obj.shape in ("box", "wall"):
+                    size = [float(v) * 2.0 for v in self.model.geom_size[gid][:3]]
+                else:
+                    diameter = float(self.model.geom_size[gid][0]) * 2.0
+                    size = [diameter, diameter, diameter]
+                quat = [quat_wxyz[1], quat_wxyz[2], quat_wxyz[3], quat_wxyz[0]]
+            else:
+                pos = [float(v) for v in obj.position_mm]
+                half_yaw = math.radians(obj.yaw_deg) * 0.5
+                quat = [0.0, 0.0, math.sin(half_yaw), math.cos(half_yaw)]
+                size = [float(v) for v in obj.size_mm]
+            rendered.append({
+                "id": obj.object_id,
+                "shape": obj.shape,
+                "position_mm": pos,
+                "orientation_quat_xyzw": quat,
+                "size_mm": size,
+                "revision": int(obj.revision),
+                "classification": PHYSICAL,
+                "collidable": obj.shape != "food",
+            })
+        return rendered
+
+    def semantic_target_for_geom(self, geom_id):
+        """Map one compiled MuJoCo geom id back to a stable lab object id."""
+        if not self._bound:
+            return None
+        try:
+            geom_id = int(geom_id)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        for obj in self.objects.values():
+            ids = self._slot_ids.get(obj.slot)
+            if ids is not None and int(ids[1]) == geom_id:
+                return {"target_id": obj.object_id, "target_kind": "lab_object"}
+        return None
+
     def state(self):
         return {
             "physical_backend": bool(self._bound),
+            "world_revision": int(self.revision),
             "objects": [self.objects[k].state() for k in sorted(self.objects)],
             "slot_capacity": {shape: int(count) for shape, count in self.slot_counts.items()},
             "slot_free": {shape: len(slots) for shape, slots in self._free_slots.items()},

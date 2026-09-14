@@ -143,6 +143,22 @@ class MockBody:
         }
         return state
 
+    def world_render_state(self):
+        half = self.heading * 0.5
+        return {
+            "world_revision": int(self.lab_world.revision),
+            "fly": {
+                "id": "fly",
+                "position_mm": [float(self.x * 1000.0), float(self.y * 1000.0), 0.7],
+                "orientation_quat_xyzw": [0.0, 0.0, math.sin(half), math.cos(half)],
+            },
+            "objects": self.lab_world.render_objects(),
+        }
+
+    def ray_pick(self, ray_origin_mm, ray_direction):
+        """Mock compatibility path: read-only query with no synthetic hit claim."""
+        return {"hit": False}
+
     def drain_lab_events(self):
         return self.lab_world.drain_events()
 
@@ -438,6 +454,78 @@ class RealFlyBody:
         if bid is None:
             return [0.0, 0.0, 0.7]
         return self.sim.mj_data.xpos[bid].copy()
+
+    def world_render_state(self):
+        # Refresh derived body/geom transforms at the same owner boundary used by
+        # ray_pick. This is especially important after a mocap/object pose write
+        # that has not yet been followed by a physics step. mj_forward does not
+        # advance qpos/qvel/time or mutate LabWorld semantic state.
+        import mujoco
+        mujoco.mj_forward(self.sim.mj_model, self.sim.mj_data)
+        bid = self.lab_world.force_body_ids.get('thorax')
+        if bid is None:
+            raise RuntimeError("thorax body id unavailable")
+        pos = [float(v) for v in self.sim.mj_data.xpos[bid]]
+        # MuJoCo stores global body quaternion as wxyz; V5 wire contract is xyzw.
+        quat_wxyz = [float(v) for v in self.sim.mj_data.xquat[bid]]
+        quat = [quat_wxyz[1], quat_wxyz[2], quat_wxyz[3], quat_wxyz[0]]
+        return {
+            "world_revision": int(self.lab_world.revision),
+            "fly": {
+                "id": "fly",
+                "position_mm": pos,
+                "orientation_quat_xyzw": quat,
+            },
+            "objects": self.lab_world.render_objects(),
+        }
+
+    def ray_pick(self, ray_origin_mm, ray_direction):
+        """Intersect the live MuJoCo scene and return a stable semantic target."""
+        import mujoco
+
+        np = self.np
+        origin = np.asarray(ray_origin_mm, dtype=float)
+        direction = np.asarray(ray_direction, dtype=float)
+        norm = float(np.linalg.norm(direction))
+        if origin.shape != (3,) or direction.shape != (3,) or not np.all(np.isfinite(origin)):
+            raise ValueError("invalid ray origin/direction")
+        if not np.all(np.isfinite(direction)) or norm < 1e-12:
+            raise ValueError("invalid ray direction")
+        direction = direction / norm
+        geom_id = np.array([-1], dtype=np.int32)
+        normal = np.zeros(3, dtype=float)
+        # Keep derived geom transforms coherent with any owner-thread mocap pose
+        # update that occurred since the previous physics step. mj_forward does
+        # not advance simulation time or mutate semantic world state.
+        mujoco.mj_forward(self.sim.mj_model, self.sim.mj_data)
+        distance = float(mujoco.mj_ray(
+            self.sim.mj_model, self.sim.mj_data,
+            origin, direction, None, True, -1, geom_id, normal))
+        if distance < 0.0 or int(geom_id[0]) < 0:
+            return {"hit": False}
+
+        gid = int(geom_id[0])
+        semantic = self.lab_world.semantic_target_for_geom(gid)
+        if semantic is None:
+            body_id = int(self.sim.mj_model.geom_bodyid[gid])
+            fly_body_ids = {int(v) for v in self.sim._internal_bodyids_by_fly.get('fly', [])}
+            if body_id in fly_body_ids:
+                semantic = {"target_id": "fly", "target_kind": "fly"}
+            else:
+                semantic = {"target_id": "world", "target_kind": "world"}
+        point = origin + direction * distance
+        normal_norm = float(np.linalg.norm(normal))
+        if normal_norm > 1e-12:
+            normal = normal / normal_norm
+        return {
+            "hit": True,
+            "target_id": semantic["target_id"],
+            "target_kind": semantic["target_kind"],
+            "distance_mm": distance,
+            "point_mm": [float(v) for v in point],
+            "normal_world": [float(v) for v in normal],
+            "geom_id": gid,
+        }
 
     def apply_lab_command(self, command):
         if command.op == "reset_body":

@@ -243,6 +243,8 @@ final class LabWindowController: NSWindowController, NSWindowDelegate {
     private let objectEndDistance = NSTextField(string: "8")
     private let worldObjectStatusLabel = NSTextField(wrappingLabelWithString: "Object status — ready")
     private let worldCapacityLabel = NSTextField(wrappingLabelWithString: "Object capacity — waiting for backend…")
+    private let worldViewer = WorldViewer(frame: .zero)
+    private let worldViewerStatusLabel = NSTextField(wrappingLabelWithString: "3D world — waiting for V5.1 backend capability…")
     private let arenaPlacement = LabArenaPlacementView(frame: .zero)
     private let createOnArenaClick = NSButton(checkboxWithTitle: "Create selected object when clicking arena", target: nil, action: nil)
     private var autoObjectSerial: [String: Int] = [:]
@@ -294,6 +296,13 @@ final class LabWindowController: NSWindowController, NSWindowDelegate {
     private var lastCommandAction = "none"
     private var lastRecordedAckKey = ""
     private var pendingCommandSchedules: [Int: LabCommandSchedule] = [:]
+    private var lastPickRequestSeq: Int?
+    private var lastAppliedPickSeq: Int?
+    private var lastPickSource: WorldViewerSnapshotSource?
+    private var lastPickSummary = ""
+    private var lastViewerConnectionGeneration: UInt64?
+    private var lastViewerSessionID: String?
+    private var lastViewerEpoch: Int?
 
     init(coordinator: Coordinator, bridge: FlyGymBridge?) {
         self.coordinator = coordinator
@@ -301,7 +310,7 @@ final class LabWindowController: NSWindowController, NSWindowDelegate {
         let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 920, height: 760),
                          styleMask: [.titled, .closable, .miniaturizable, .resizable],
                          backing: .buffered, defer: false)
-        w.title = "Thongpari Fly Neuron Sim — Virtual Fly Lab V4"
+        w.title = "Thongpari Fly Neuron Sim — Virtual Fly Lab V5.1 Preview"
         w.minSize = NSSize(width: 760, height: 600)
         super.init(window: w)
         w.delegate = self
@@ -313,6 +322,32 @@ final class LabWindowController: NSWindowController, NSWindowDelegate {
             self.worldObjectStatusLabel.stringValue = String(format: "Object status — picked X %.1f · Y %.1f mm", x, y)
             self.worldObjectStatusLabel.textColor = .secondaryLabelColor
             if self.createOnArenaClick.state == .on { self.createObject() }
+        }
+        worldViewer.onPickRay = { [weak self] ray in
+            guard let self, let bridge = self.bridge else { return }
+            guard bridge.worldViewerV5_1Available else {
+                self.worldViewerStatusLabel.stringValue = "3D world — backend does not advertise V5.1 snapshot/pick"
+                self.worldViewerStatusLabel.textColor = .systemOrange
+                return
+            }
+            guard let source = self.worldViewer.currentSnapshotSource else {
+                self.worldViewerStatusLabel.stringValue = "3D world — no atomic snapshot available for picking"
+                self.worldViewerStatusLabel.textColor = .systemOrange
+                return
+            }
+            guard let seq = bridge.sendRayPick(rayOriginMM: ray.originMM,
+                                               rayDirection: ray.direction,
+                                               sourceSnapshotSeq: source.snapshotSeq,
+                                               sourceWorldRevision: source.worldRevision,
+                                               sourceSimTick: source.simTick) else {
+                self.worldViewerStatusLabel.stringValue = "3D world — pick request was not queued"
+                self.worldViewerStatusLabel.textColor = .systemOrange
+                return
+            }
+            self.lastPickRequestSeq = seq
+            self.lastPickSource = source
+            self.worldViewerStatusLabel.stringValue = "3D world — authoritative pick #\(seq) pending…"
+            self.worldViewerStatusLabel.textColor = .secondaryLabelColor
         }
         timer = Timer.scheduledTimer(withTimeInterval: 0.10, repeats: true) { [weak self] _ in
             self?.refresh()
@@ -541,6 +576,12 @@ final class LabWindowController: NSWindowController, NSWindowDelegate {
         worldCapacityLabel.font = NSFont.monospacedSystemFont(ofSize: 10.5, weight: .regular)
         worldCapacityLabel.textColor = .secondaryLabelColor
         worldCapacityLabel.maximumNumberOfLines = 2
+        worldViewerStatusLabel.font = NSFont.systemFont(ofSize: 11.5, weight: .medium)
+        worldViewerStatusLabel.textColor = .secondaryLabelColor
+        worldViewerStatusLabel.maximumNumberOfLines = 2
+        worldViewer.translatesAutoresizingMaskIntoConstraints = false
+        worldViewer.heightAnchor.constraint(equalToConstant: 360).isActive = true
+        worldViewer.widthAnchor.constraint(greaterThanOrEqualToConstant: 700).isActive = true
         [objectX, objectY, objectZ, objectSize, objectSpeed, objectEndDistance].forEach { _ = field($0) }
         addPopupItems(objectShape, [
             ("Box", "box"),
@@ -557,8 +598,11 @@ final class LabWindowController: NSWindowController, NSWindowDelegate {
         arenaPlacement.selectedShape = selectedValue(objectShape, fallback: "box")
         arenaPlacement.selectedPoint = (d(objectX), d(objectY))
         return page([
+            section("3D world — backend snapshot", kind: .physical,
+                    help: "Read-only V5.1 view of one atomic backend world snapshot. Camera movement here does not change the simulation. A click only sends a ray; MuJoCo decides the authoritative hit.",
+                    views: [worldViewer, worldViewerStatusLabel]),
             section("Click to place an object", kind: .physical,
-                    help: "Choose a type first, then click the top-down arena. Authoritative backend objects are drawn at their real X/Y footprint and the green fly marker follows the live MuJoCo position/heading. Up is +X forward and left is +Y. The view auto-zooms to keep placed objects and the fly visible. With the checkbox on, one click creates the selected object; turn it off to pick coordinates only.",
+                    help: "This top-down arena remains a minimap and coordinate helper. Choose a type first, then click the arena. Up is +X forward and left is +Y. With the checkbox on, one click creates the selected object; turn it off to pick coordinates only.",
                     views: [
                         row([label("Type"), objectShape, label("Name"), objectID, createOnArenaClick]),
                         arenaPlacement,
@@ -1309,6 +1353,42 @@ final class LabWindowController: NSWindowController, NSWindowDelegate {
         return a < 1 ? String(format: "%.0f ms", a * 1000) : String(format: "%.1f s", a)
     }
 
+    private func yawRadians(quaternion q: [Double]) -> Double {
+        guard q.count == 4 else { return 0 }
+        // xyzw quaternion -> z-up yaw.
+        let x = q[0], y = q[1], z = q[2], w = q[3]
+        return atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
+    }
+
+    private func updateArenaFromAtomicSnapshot(_ snapshot: WorldRenderSnapshot) {
+        arenaPlacement.worldObjects = snapshot.objects.map { object in
+            LabWorldObjectRemote(id: object.id, shape: object.shape,
+                                 positionMM: object.positionMM, sizeMM: object.sizeMM,
+                                 yawDeg: yawRadians(quaternion: object.orientationQuatXYZW) * 180 / .pi)
+        }
+        if let fly = snapshot.fly {
+            arenaPlacement.flyPose = (fly.positionMM[0], fly.positionMM[1],
+                                      yawRadians(quaternion: fly.orientationQuatXYZW))
+        } else {
+            arenaPlacement.flyPose = nil
+        }
+    }
+
+    private func clearWorldViewerSnapshotPresentation(resetIdentity: Bool) {
+        worldViewer.clearSnapshot()
+        arenaPlacement.worldObjects = []
+        arenaPlacement.flyPose = nil
+        lastPickRequestSeq = nil
+        lastAppliedPickSeq = nil
+        lastPickSource = nil
+        lastPickSummary = ""
+        if resetIdentity {
+            lastViewerConnectionGeneration = nil
+            lastViewerSessionID = nil
+            lastViewerEpoch = nil
+        }
+    }
+
     private func refresh() {
         let now = Date()
         let t = coordinator.labTelemetry()
@@ -1322,13 +1402,84 @@ final class LabWindowController: NSWindowController, NSWindowDelegate {
             ack = bridge.latestLabAck()
             event = bridge.latestLabEvent()
 
-            if let objects = state?.authoritativeObjects {
-                arenaPlacement.worldObjects = objects
+            let viewerGeneration = bridge.connectionGeneration
+            if let previousGeneration = lastViewerConnectionGeneration,
+               previousGeneration != viewerGeneration {
+                clearWorldViewerSnapshotPresentation(resetIdentity: true)
             }
-            if let body = bridge.latestBody(maxAge: 3600.0) {
-                arenaPlacement.flyPose = (body.positionXmm, body.positionYmm, body.headingRad)
+
+            if bridge.worldViewerV5_1Available {
+                _ = bridge.requestWorldRenderSnapshot()
+                if let snapshot = bridge.latestWorldRenderSnapshot(maxAge: 1.0) {
+                    let identityChanged = lastViewerConnectionGeneration != viewerGeneration
+                        || lastViewerSessionID != snapshot.sessionID
+                        || lastViewerEpoch != snapshot.epoch
+                    if identityChanged {
+                        clearWorldViewerSnapshotPresentation(resetIdentity: false)
+                    }
+                    lastViewerConnectionGeneration = viewerGeneration
+                    lastViewerSessionID = snapshot.sessionID
+                    lastViewerEpoch = snapshot.epoch
+                    if snapshot.ok, let snapshotID = snapshot.snapshotID, let revision = snapshot.revision {
+                        worldViewer.apply(snapshot: snapshot)
+                        updateArenaFromAtomicSnapshot(snapshot)
+                        let pickSuffix = lastPickSummary.isEmpty ? "" : " · \(lastPickSummary)"
+                        worldViewerStatusLabel.stringValue = "3D world — snapshot #\(snapshotID) · rev \(revision) · tick \(snapshot.simTick) · \(snapshot.objects.count) objects\(pickSuffix)"
+                        worldViewerStatusLabel.textColor = .secondaryLabelColor
+                    } else {
+                        worldViewerStatusLabel.stringValue = "3D world — snapshot error: \(snapshot.error ?? "backend rejected request")"
+                        worldViewerStatusLabel.textColor = .systemRed
+                    }
+                } else {
+                    // begin/reset promotes bridge identity and clears its V5 cache
+                    // before the next owner-boundary snapshot arrives. Never leave
+                    // the previous epoch/session rendered during that gap.
+                    clearWorldViewerSnapshotPresentation(resetIdentity: false)
+                    lastViewerConnectionGeneration = viewerGeneration
+                    lastViewerSessionID = nil
+                    lastViewerEpoch = nil
+                    worldViewerStatusLabel.stringValue = "3D world — waiting for atomic backend snapshot…"
+                    worldViewerStatusLabel.textColor = .secondaryLabelColor
+                }
+                if let pick = bridge.latestRayPickResult() {
+                    switch worldViewerPickDisposition(
+                        pick,
+                        latestRequestSeq: lastPickRequestSeq,
+                        consumedSeq: lastAppliedPickSeq,
+                        expectedSource: lastPickSource) {
+                    case .ignore:
+                        break
+                    case .showError:
+                        lastAppliedPickSeq = pick.seq
+                        lastPickSummary = "pick #\(pick.seq) error: \(pick.error ?? "rejected")"
+                        worldViewerStatusLabel.stringValue = "3D world — \(lastPickSummary)"
+                        worldViewerStatusLabel.textColor = .systemRed
+                    case .applySuccess:
+                        lastAppliedPickSeq = pick.seq
+                        worldViewer.apply(pickResult: pick)
+                        if pick.hit {
+                            lastPickSummary = String(format: "pick #%d %@ · %.1f mm",
+                                                     pick.seq, pick.targetID ?? "hit", pick.distanceMM ?? 0)
+                        } else {
+                            lastPickSummary = "pick #\(pick.seq) miss"
+                        }
+                    }
+                }
             } else {
-                arenaPlacement.flyPose = nil
+                clearWorldViewerSnapshotPresentation(resetIdentity: true)
+                worldViewerStatusLabel.stringValue = bridge.connected
+                    ? "3D world — unavailable: backend does not advertise world_render_snapshot + ray_pick"
+                    : "3D world — waiting for FlyGym connection…"
+                worldViewerStatusLabel.textColor = bridge.connected ? .systemOrange : .secondaryLabelColor
+                // Preserve the V4 minimap when connected to an older backend.
+                if let objects = state?.authoritativeObjects {
+                    arenaPlacement.worldObjects = objects
+                }
+                if let body = bridge.latestBody(maxAge: 3600.0) {
+                    arenaPlacement.flyPose = (body.positionXmm, body.positionYmm, body.headingRad)
+                } else {
+                    arenaPlacement.flyPose = nil
+                }
             }
             if let capacity = state?.authoritativeSlotCapacity {
                 let free = state?.authoritativeSlotFree ?? [:]

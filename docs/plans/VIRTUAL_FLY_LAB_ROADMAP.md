@@ -14,14 +14,14 @@
 
 ## 2. 현재 진도와 다음 작업
 
-- 현재 V5 준비 기준 HEAD: `e900b27` (`Complete Virtual Fly Lab V4 deterministic sessions`). V5 준비 시작 시 작업 트리는 clean이었고, V4 구현은 자체 완료 commit에 보존돼 있다.
+- V4 완료 기준은 `e900b27` (`Complete Virtual Fly Lab V4 deterministic sessions`), V5 준비 문서는 `3faf942` (`Prepare Virtual Fly Lab V5 implementation`)에 커밋됐다.
 - V3: 기존 완료/독립 검증 보고서에서 수정 및 회귀 증거를 확인했다. 기록 중 실제 메뉴 Quit 수동 확인은 별도 사용자 검증 항목이다.
 - V4: **COMPLETE in the current local working tree.** fixed tick/lockstep, 양쪽 pause barrier, session/epoch, authoritative applied tick, stale/duplicate safety를 fresh 자동·real TCP·real MuJoCo·real Viewer GUI로 검증했다. 완료 근거는 [V4 완료 보고서](../reports/V4_COMPLETION_REPORT.md)에 있다.
 - V4 최종 GUI smoke에서 persistent `session_state` 중복 처리 결함을 발견해 `LabSession`의 lifecycle control sequence 소비를 idempotent하게 수정했고, 회귀를 추가한 뒤 전체 suite와 real Viewer를 다시 통과했다.
-- V5: **구현 준비 완료 / runtime 미구현.** V5 진행표와 설치 API preflight는 [V5 진행표](../reports/V5_PROGRESS.md)에 있으며 **다음 코드 단계는 V5.1 viewport/API prototype**이다.
+- V5: **V5.1 구현 중 / automated core verified.** atomic world snapshot, optional V5 viewer capability, authoritative MuJoCo ray pick, AppKit-native SceneKit `WorldViewer` prototype까지 구현했고 focused Swift/Python/V4/real MuJoCo/real-eye 회귀가 통과했다. **V5.1 complete 전 남은 gate는 fresh integrated GUI + keyboard focus suitability + viewport/snapshot/pick latency 실측**이다. 근거는 [V5 진행표](../reports/V5_PROGRESS.md)에 있다.
 - V6–V14: 계획. V5 완료 전에는 앞당겨 구현하지 않는다.
 
-**바로 다음 실행은 V5.1 Viewer/API prototype이다. V6 이후 기능을 앞당겨 섞지 않는다.**
+**바로 다음 실행은 V5.1 GUI/focus/performance acceptance다. 통과 전 V5.2 또는 V6 이후 기능으로 넘어가지 않는다.**
 
 ## 3. 순차 버전 표
 

@@ -16,6 +16,8 @@ from protocol import (
     decode_line, encode, BrainPacket, BodyPacket, LabCommand, LabStatePacket, LabEventPacket,
     LabCommandQueue, HelloPacket, SessionControlPacket, SessionStatePacket,
     ExperimentStepPacket, ExperimentStepResultPacket,
+    WorldRenderRequestPacket, WorldRenderSnapshotPacket,
+    RayPickRequestPacket, RayPickResultPacket,
     V4_EXPERIMENT_QUANTUM_TICKS, V4_PROTOCOL_VERSION,
 )
 from neural_decoder import decode, LocomotorCommand
@@ -38,8 +40,10 @@ class Bridge:
         self.pending_lab_responses = deque(maxlen=128)
         self.pending_session_controls = deque()
         self.pending_experiment_steps = deque()
+        self.pending_view_queries = deque()
         self.session_control_cap = 32
         self.experiment_step_cap = 1
+        self.view_query_cap = 64
         self.client_hello = None
         self.session_id = ""
         self.session_epoch = 0
@@ -49,8 +53,11 @@ class Bridge:
         self.last_step_seq = -1
         self.recent_step_results = OrderedDict()
         self.recent_command_results = OrderedDict()
+        self.recent_view_results = OrderedDict()
+        self.snapshot_sources = OrderedDict()
         self.deferred_lab_commands = []
         self.recent_result_cap = 128
+        self.snapshot_seq = 0
         self.brain_count = 0
         self.body_count = 0
         self.lab_count = 0
@@ -95,6 +102,16 @@ class Bridge:
                         ok=False, error="experiment step queue full"))
                 else:
                     self.pending_experiment_steps.append(pkt)
+        elif isinstance(pkt, (WorldRenderRequestPacket, RayPickRequestPacket)):
+            with self.lock:
+                if len(self.pending_view_queries) >= self.view_query_cap:
+                    response = self._view_query_error(
+                        pkt, "view query queue full",
+                        tick=(self.session_tick if self.session_mode == "deterministic" else 0),
+                        revision=0)
+                    self.pending_lab_responses.append(response)
+                else:
+                    self.pending_view_queries.append(pkt)
         elif isinstance(pkt, LabCommand):
             self.lab_count += 1
             if not self.lab_commands.push(pkt):
@@ -171,6 +188,166 @@ class Bridge:
         if stale:
             return LocomotorCommand(), 1.0, age_s, True
         return cmd, tempo, age_s, False
+
+    def _current_owner_tick(self):
+        if self.session_mode == "deterministic" and self.session_id:
+            return int(self.session_tick)
+        try:
+            body_t = float(getattr(self.body, "t", 0.0))
+        except (TypeError, ValueError, OverflowError):
+            body_t = 0.0
+        if not math.isfinite(body_t) or body_t < 0.0:
+            body_t = 0.0
+        return int(round(body_t * 1000.0))
+
+    def _world_revision(self):
+        world = getattr(self.body, "lab_world", None)
+        try:
+            revision = int(getattr(world, "revision", 0))
+        except (TypeError, ValueError, OverflowError):
+            revision = 0
+        return max(0, revision)
+
+    def _world_structure_revision(self):
+        world = getattr(self.body, "lab_world", None)
+        try:
+            revision = int(getattr(world, "structure_revision", 0))
+        except (TypeError, ValueError, OverflowError):
+            revision = 0
+        return max(0, revision)
+
+    def _view_query_error(self, request, message, *, tick=None, revision=None):
+        if tick is None:
+            tick = self._current_owner_tick()
+        if revision is None:
+            revision = self._world_revision()
+        if isinstance(request, WorldRenderRequestPacket):
+            return WorldRenderSnapshotPacket(
+                session_id=request.session_id, epoch=request.epoch,
+                request_seq=request.seq, sim_tick=tick,
+                ok=False, error=str(message)[:512])
+        return RayPickResultPacket(
+            session_id=request.session_id, epoch=request.epoch,
+            seq=request.seq, sim_tick=tick, world_revision=revision,
+            source_snapshot_seq=request.source_snapshot_seq,
+            source_world_revision=request.source_world_revision,
+            source_sim_tick=request.source_sim_tick,
+            ok=False, hit=False, error=str(message)[:512])
+
+    def _validate_view_query_session(self, request):
+        if request.protocol_version < V4_PROTOCOL_VERSION:
+            return "unsupported protocol version"
+        if self.session_id:
+            if request.session_id != self.session_id:
+                return "wrong session"
+            if request.epoch != self.session_epoch:
+                return "wrong epoch"
+        elif request.session_id != "" or request.epoch != 0:
+            return "session not active"
+        return None
+
+    def _pop_view_queries(self):
+        with self.lock:
+            out = list(self.pending_view_queries)
+            self.pending_view_queries.clear()
+        return out
+
+    def _validate_ray_source(self, request):
+        """Validate the visible snapshot reference without pinning interactive time."""
+        if request.source_snapshot_seq > self.snapshot_seq:
+            return "unknown source snapshot"
+        source = self.snapshot_sources.get(request.source_snapshot_seq)
+        if source is None:
+            return "unknown source snapshot"
+        if source["session_id"] != request.session_id or source["epoch"] != request.epoch:
+            return "unknown source snapshot"
+        if (source["world_revision"] != request.source_world_revision or
+                source["sim_tick"] != request.source_sim_tick):
+            return "source snapshot metadata mismatch"
+        if source["structure_revision"] != self._world_structure_revision():
+            return "stale source world revision"
+        # Deliberately do not compare source_sim_tick to the current owner tick.
+        # In interactive mode the body and movable object poses may advance after
+        # the frame was displayed; the authoritative ray is still evaluated
+        # against current owner state. Structural scene changes still fail closed.
+        return None
+
+    def _reset_view_transport_state_locked(self):
+        """Drop only connection-local V5 query identity/provenance/queued replies."""
+        self.pending_view_queries.clear()
+        self.recent_view_results.clear()
+        self.snapshot_sources.clear()
+        retained = [
+            packet for packet in self.pending_lab_responses
+            if not isinstance(packet, (WorldRenderSnapshotPacket, RayPickResultPacket))
+        ]
+        self.pending_lab_responses.clear()
+        self.pending_lab_responses.extend(retained)
+
+    def _process_view_queries(self):
+        """Serve read-only V5 queries on the simulation-owner thread."""
+        for request in self._pop_view_queries():
+            kind = "snapshot" if isinstance(request, WorldRenderRequestPacket) else "ray"
+            key = (kind, request.session_id, request.epoch, request.seq)
+            cached = self.recent_view_results.get(key)
+            if cached is not None:
+                self._queue_lab_response(cached)
+                continue
+            error = self._validate_view_query_session(request)
+            if error is not None:
+                response = self._view_query_error(request, error)
+                self._remember(self.recent_view_results, key, response)
+                self._queue_lab_response(response)
+                continue
+            try:
+                if isinstance(request, WorldRenderRequestPacket):
+                    state_fn = getattr(self.body, "world_render_state", None)
+                    if state_fn is None:
+                        raise RuntimeError("backend has no world render state")
+                    state = state_fn()
+                    self.snapshot_seq += 1
+                    response = WorldRenderSnapshotPacket(
+                        session_id=request.session_id, epoch=request.epoch,
+                        request_seq=request.seq, sim_tick=self._current_owner_tick(),
+                        ok=True, snapshot_seq=self.snapshot_seq,
+                        world_revision=int(state["world_revision"]),
+                        fly=state["fly"], objects=state["objects"])
+                    # Force strict output validation before caching/sending.
+                    response = WorldRenderSnapshotPacket.from_dict(response.to_dict())
+                    self._remember(self.snapshot_sources, response.snapshot_seq, {
+                        "session_id": response.session_id,
+                        "epoch": response.epoch,
+                        "world_revision": response.world_revision,
+                        "sim_tick": response.sim_tick,
+                        "structure_revision": self._world_structure_revision(),
+                    })
+                else:
+                    source_error = self._validate_ray_source(request)
+                    if source_error is not None:
+                        response = self._view_query_error(request, source_error)
+                        self._remember(self.recent_view_results, key, response)
+                        self._queue_lab_response(response)
+                        continue
+                    ray_fn = getattr(self.body, "ray_pick", None)
+                    if ray_fn is None:
+                        raise RuntimeError("backend cannot ray pick")
+                    hit = ray_fn(request.ray_origin_mm, request.ray_direction)
+                    response = RayPickResultPacket(
+                        session_id=request.session_id, epoch=request.epoch,
+                        seq=request.seq, sim_tick=self._current_owner_tick(),
+                        world_revision=self._world_revision(),
+                        source_snapshot_seq=request.source_snapshot_seq,
+                        source_world_revision=request.source_world_revision,
+                        source_sim_tick=request.source_sim_tick,
+                        ok=True, hit=bool(hit.get("hit", False)),
+                        target_id=hit.get("target_id"), target_kind=hit.get("target_kind"),
+                        distance_mm=hit.get("distance_mm"), point_mm=hit.get("point_mm"),
+                        normal_world=hit.get("normal_world"), geom_id=hit.get("geom_id"))
+                    response = RayPickResultPacket.from_dict(response.to_dict())
+            except Exception as exc:
+                response = self._view_query_error(request, str(exc))
+            self._remember(self.recent_view_results, key, response)
+            self._queue_lab_response(response)
 
     def _lab_state(self, *, ack=None, ok=True, error=None, last_action=None,
                    applied_tick=None, applied_epoch=None, status=None):
@@ -330,6 +507,8 @@ class Bridge:
                 self.last_step_seq = -1
                 self.recent_step_results.clear()
                 self.recent_command_results.clear()
+                self.recent_view_results.clear()
+                self.snapshot_sources.clear()
                 self.deferred_lab_commands = []
                 self._queue_lab_response(self._session_state_packet(request, state="running"))
                 continue
@@ -371,6 +550,8 @@ class Bridge:
                 self.last_step_seq = -1
                 self.recent_step_results.clear()
                 self.recent_command_results.clear()
+                self.recent_view_results.clear()
+                self.snapshot_sources.clear()
                 self.deferred_lab_commands = []
                 with self.lock:
                     self.pending_experiment_steps.clear()
@@ -465,6 +646,7 @@ class Bridge:
             self.client_hello = None
             self.pending_session_controls.clear()
             self.pending_experiment_steps.clear()
+            self._reset_view_transport_state_locked()
         try:
             conn.sendall(encode(self._hello_packet()))
         except OSError:
@@ -535,6 +717,7 @@ class Bridge:
             # particular, resume must remain processable while body stepping is
             # paused; pausing the receiver/owner thread itself would deadlock.
             self._process_session_controls()
+            self._process_view_queries()
 
             if self.session_mode == "deterministic":
                 step_request = None if self.session_paused else self._pop_experiment_step()

@@ -1,8 +1,8 @@
 # Virtual Fly Lab V5 — 통합 Viewer와 세계 안의 사용자
 
-작성: 2026-09-13 · 상태: **READY TO IMPLEMENT / V5.1 NEXT / RUNTIME NOT YET IMPLEMENTED**
+작성: 2026-09-13 · 상태: **V5.1 IMPLEMENTING / AUTOMATED CORE VERIFIED / GUI ACCEPTANCE PENDING**
 
-착수 기준: V4 completion commit `e900b27` (`Complete Virtual Fly Lab V4 deterministic sessions`). 구현 진행표와 V5.1 API preflight는 [`../reports/V5_PROGRESS.md`](../reports/V5_PROGRESS.md)에 기록한다.
+착수 기준: V4 completion commit `e900b27` (`Complete Virtual Fly Lab V4 deterministic sessions`). V5 준비는 `3faf942` (`Prepare Virtual Fly Lab V5 implementation`)에 커밋됐다. 구현 진행표와 V5.1 검증 상태는 [`../reports/V5_PROGRESS.md`](../reports/V5_PROGRESS.md)에 기록한다.
 
 선행: **V4 완료 후에만 착수**. 병렬로 다음 버전 기능을 구현하거나 버전 순서를 바꾸지 않는다.
 
